@@ -1,0 +1,76 @@
+# XcodeGen 프로젝트 정의:  brew install xcodegen  →  xcodegen generate  →  open Dulleobang.xcodeproj
+name: Dulleobang
+options:
+  bundleIdPrefix: kr.ac.cau.dulleobang
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: ko                # 시스템 UI(RoomPlan 촬영 안내 · 공유 시트 · 사진 선택 등)를 한국어로
+settings:
+  base:
+    SWIFT_VERSION: "5.0"                 # Swift 6 엄격 동시성 대신 Swift 5 모드 (경고만)
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: "338ZGXYZ43"       # 서명 팀 ID (다른 팀원은 Xcode › Signing 에서 본인 팀으로 바꾸거나 여기를 수정)
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  Dulleobang:
+    type: application
+    platform: iOS
+    sources:
+      - path: Dulleobang
+        excludes:
+          - "Resources/Viewer/**"
+          - "Resources/Mock/**"
+      - path: Dulleobang/Resources/Viewer
+        type: folder                     # 폴더 참조(파란 폴더) → 번들 안에 Viewer/ 로 복사
+        buildPhase: resources
+      - path: Dulleobang/Resources/Mock
+        type: folder                     # 데모 데이터(mock_seed.json · 사진) → 번들 안에 Mock/ 로 복사
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kr.ac.cau.dulleobang.app
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Dulleobang/Info.plist
+      properties:
+        CFBundleDisplayName: 둘러방
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIRequiredDeviceCapabilities: [arkit]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: 매물 공간과 가구를 3D 로 만들기 위해 카메라로 촬영합니다.
+        NSLocalNetworkUsageDescription: 같은 Wi-Fi 의 개발 서버에 촬영 데이터를 올리기 위해 로컬 네트워크에 접속합니다.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true   # 개발용 (http 로컬 서버). 배포 전에는 https 로 바꾸고 제거
+          NSAllowsLocalNetworking: true
+        UIFileSharingEnabled: true       # 파일 앱에서 captures/ 의 zip 을 꺼낼 수 있게
+        LSSupportsOpeningDocumentsInPlace: true
+  DulleobangTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [DulleobangTests]
+    dependencies:
+      - target: Dulleobang
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Dulleobang:
+    build:
+      targets:
+        Dulleobang: all
+        DulleobangTests: [test]
+    run:
+      config: Debug
+      # iOS 27 의 RealityKit(RoomPlan 화면)이 Metal API 검증에 걸려 멈추는 문제 회피 (Apple 프레임워크 쪽 문제)
+      enableGPUValidationMode: false
+      enableGPUFrameCaptureMode: disabled
+    test:
+      targets: [DulleobangTests]

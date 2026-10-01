@@ -1,0 +1,2323 @@
+{
+ "seedVersion": 2,
+ "agents": [
+  {
+   "userId": "9001",
+   "name": "차유현",
+   "officeName": "중앙공인중개사사무소",
+   "phone": "010-0000-1001"
+  },
+  {
+   "userId": "9002",
+   "name": "김도윤",
+   "officeName": "상도역 공인중개사",
+   "phone": "010-0000-1002"
+  },
+  {
+   "userId": "9003",
+   "name": "이서진",
+   "officeName": "노량진 한강부동산",
+   "phone": "010-0000-1003"
+  }
+ ],
+ "listings": [
+  {
+   "listing": {
+    "listingId": "101",
+    "location": "서울 동작구 흑석동 중앙하이츠 402호",
+    "price": {
+     "deposit": 1000,
+     "monthly": 57
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 7,
+    "roomType": "ONE_ROOM",
+    "floor": 4,
+    "totalFloors": 5,
+    "area": 23.06,
+    "supplyArea": 30.44,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "closet",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L01_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L01_1.jpg",
+     "bundle://Mock/L01_2.jpg",
+     "bundle://Mock/L01_3.jpg",
+     "bundle://Mock/bath_1.jpg"
+    ],
+    "latitude": 37.5069,
+    "longitude": 126.9598,
+    "livingEnvironment": "중앙대 정문 도보 4분, 흑석역(9호선) 도보 8분. 1층에 편의점이 있고 골목 안쪽이라 조용해요.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9001",
+   "rank": 2
+  },
+  {
+   "listing": {
+    "listingId": "102",
+    "location": "서울 동작구 상도동 상도그린빌 201호",
+    "price": {
+     "deposit": 500,
+     "monthly": 31
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 5,
+    "roomType": "ONE_ROOM",
+    "floor": 2,
+    "totalFloors": 4,
+    "area": 21.54,
+    "supplyArea": 28.43,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "2026-10-15",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L02_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L02_1.jpg",
+     "bundle://Mock/L02_2.jpg",
+     "bundle://Mock/L02_3.jpg",
+     "bundle://Mock/bath_2.jpg"
+    ],
+    "latitude": 37.5031,
+    "longitude": 126.9489,
+    "livingEnvironment": "상도역(7호선) 도보 6분. 시장·마트가 가깝고 버스 정류장 바로 앞. 오래된 건물이지만 올수리했어요.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9002",
+   "rank": 3
+  },
+  {
+   "listing": {
+    "listingId": "103",
+    "location": "서울 동작구 흑석동 흑석리버뷰 303호",
+    "price": {
+     "deposit": 700,
+     "monthly": 48
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 6,
+    "roomType": "ONE_ROOM",
+    "floor": 3,
+    "totalFloors": 5,
+    "area": 22.34,
+    "supplyArea": 29.49,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "bed",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L03_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L03_1.jpg",
+     "bundle://Mock/L03_2.jpg",
+     "bundle://Mock/L03_3.jpg",
+     "bundle://Mock/bath_3.jpg"
+    ],
+    "latitude": 37.5081,
+    "longitude": 126.9621,
+    "livingEnvironment": "중앙대 후문 도보 6분. 남향 큰 창으로 채광이 좋아요. 주변에 카페·식당이 많습니다.",
+    "space3DInfo": {
+     "status": "NONE"
+    }
+   },
+   "ownerId": "9001",
+   "rank": 9
+  },
+  {
+   "listing": {
+    "listingId": "104",
+    "location": "서울 동작구 상도동 새싹빌 302호",
+    "price": {
+     "deposit": 1000,
+     "monthly": 54
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 8,
+    "roomType": "ONE_ROOM",
+    "floor": 3,
+    "totalFloors": 4,
+    "area": 21.54,
+    "supplyArea": 28.43,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "2026-11-01",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L04_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L04_1.jpg",
+     "bundle://Mock/L04_2.jpg",
+     "bundle://Mock/L04_3.jpg",
+     "bundle://Mock/bath_1.jpg"
+    ],
+    "latitude": 37.5018,
+    "longitude": 126.9534,
+    "livingEnvironment": "상도역 도보 9분. 주방 겸 원룸 구조, 세탁기·냉장고는 새 제품(옵션)이에요.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "me",
+   "rank": 6,
+   "fallbackOwnerId": "9002"
+  },
+  {
+   "listing": {
+    "listingId": "105",
+    "location": "서울 동작구 노량진동 노량진스테이 501호",
+    "price": {
+     "deposit": 1500,
+     "monthly": 62
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 9,
+    "roomType": "ONE_ROOM",
+    "floor": 5,
+    "totalFloors": 7,
+    "area": 23.06,
+    "supplyArea": 30.44,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "closet",
+     "elevator",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L05_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L05_1.jpg",
+     "bundle://Mock/L05_2.jpg",
+     "bundle://Mock/L05_3.jpg",
+     "bundle://Mock/bath_2.jpg"
+    ],
+    "latitude": 37.5112,
+    "longitude": 126.9471,
+    "livingEnvironment": "노량진역(1·9호선) 도보 7분. 학원가·독서실 인접, 엘리베이터 있음. 비어 있는 넓은 방이라 가구 배치가 자유로워요.",
+    "space3DInfo": {
+     "status": "RUNNING",
+     "jobId": "J105"
+    }
+   },
+   "ownerId": "9003",
+   "rank": 8
+  },
+  {
+   "listing": {
+    "listingId": "106",
+    "location": "서울 동작구 흑석동 흑석역 센트럴오피스텔 702호",
+    "price": {
+     "deposit": 1000,
+     "monthly": 80
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 12,
+    "roomType": "OFFICETEL",
+    "floor": 7,
+    "totalFloors": 12,
+    "area": 20.88,
+    "supplyArea": 39.67,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "closet",
+     "elevator",
+     "parking",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L06_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L06_1.jpg",
+     "bundle://Mock/L06_2.jpg",
+     "bundle://Mock/L06_3.jpg",
+     "bundle://Mock/bath_3.jpg"
+    ],
+    "latitude": 37.5083,
+    "longitude": 126.9652,
+    "livingEnvironment": "흑석역 3번 출구 도보 2분 역세권 오피스텔. 무인택배함, 24시간 보안.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9001",
+   "rank": 1
+  },
+  {
+   "listing": {
+    "listingId": "107",
+    "location": "서울 동작구 상도동 푸른마을 301호",
+    "price": {
+     "deposit": 25000,
+     "monthly": 0
+    },
+    "dealType": "JEONSE",
+    "maintenanceFee": 10,
+    "roomType": "TWO_ROOM",
+    "floor": 3,
+    "totalFloors": 4,
+    "area": 34.82,
+    "supplyArea": 45.27,
+    "rooms": 2,
+    "bathrooms": 1,
+    "availableFrom": "2026-12-01",
+    "rentalOptions": [
+     "aircon",
+     "parking",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L07_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L07_1.jpg",
+     "bundle://Mock/L07_2.jpg",
+     "bundle://Mock/L07_3.jpg",
+     "bundle://Mock/bath_1.jpg"
+    ],
+    "latitude": 37.4998,
+    "longitude": 126.9502,
+    "livingEnvironment": "상도근린공원 바로 앞 조용한 주택가 투룸. 거실 분리형, 주차 1대 가능.",
+    "space3DInfo": {
+     "status": "NONE"
+    }
+   },
+   "ownerId": "9002",
+   "rank": 10
+  },
+  {
+   "listing": {
+    "listingId": "108",
+    "location": "서울 동작구 흑석동 명수대빌라 101호",
+    "price": {
+     "deposit": 300,
+     "monthly": 45
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 5,
+    "roomType": "ONE_ROOM",
+    "floor": 1,
+    "totalFloors": 4,
+    "area": 21.22,
+    "supplyArea": 28.01,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer"
+    ],
+    "thumbnailUri": "bundle://Mock/L08_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L08_1.jpg",
+     "bundle://Mock/L08_2.jpg",
+     "bundle://Mock/L08_3.jpg",
+     "bundle://Mock/bath_2.jpg"
+    ],
+    "latitude": 37.5094,
+    "longitude": 126.9608,
+    "livingEnvironment": "중앙대 정문 도보 3분. 1층이라 출입이 편하고 보증금 부담이 적어요.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9001",
+   "rank": 4
+  },
+  {
+   "listing": {
+    "listingId": "109",
+    "location": "서울 동작구 상도동 상도힐 202호",
+    "price": {
+     "deposit": 2000,
+     "monthly": 40
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 7,
+    "roomType": "ONE_ROOM",
+    "floor": 2,
+    "totalFloors": 5,
+    "area": 24.58,
+    "supplyArea": 32.45,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "2026-10-20",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L09_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L09_1.jpg",
+     "bundle://Mock/L09_2.jpg",
+     "bundle://Mock/L09_3.jpg",
+     "bundle://Mock/bath_3.jpg"
+    ],
+    "latitude": 37.4985,
+    "longitude": 126.9541,
+    "livingEnvironment": "상도역 도보 10분. 보증금 조정 가능(협의). 주방이 넓은 원룸이에요.",
+    "space3DInfo": {
+     "status": "NONE"
+    }
+   },
+   "ownerId": "me",
+   "rank": 11,
+   "fallbackOwnerId": "9002"
+  },
+  {
+   "listing": {
+    "listingId": "110",
+    "location": "서울 동작구 본동 한강하우스 401호",
+    "price": {
+     "deposit": 18000,
+     "monthly": 0
+    },
+    "dealType": "JEONSE",
+    "maintenanceFee": 8,
+    "roomType": "ONE_ROOM",
+    "floor": 4,
+    "totalFloors": 6,
+    "area": 22.02,
+    "supplyArea": 29.07,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "2026-11-15",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "closet",
+     "elevator",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L10_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L10_1.jpg",
+     "bundle://Mock/L10_2.jpg",
+     "bundle://Mock/L10_3.jpg",
+     "bundle://Mock/bath_1.jpg"
+    ],
+    "latitude": 37.5106,
+    "longitude": 126.9552,
+    "livingEnvironment": "노들역(9호선) 도보 5분, 한강공원 산책로가 가까워요. 전세자금대출 가능.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9003",
+   "rank": 7
+  },
+  {
+   "listing": {
+    "listingId": "111",
+    "location": "서울 동작구 흑석동 한강뷰캐슬 602호",
+    "price": {
+     "deposit": 3000,
+     "monthly": 90
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 15,
+    "roomType": "TWO_ROOM",
+    "floor": 6,
+    "totalFloors": 8,
+    "area": 36.74,
+    "supplyArea": 47.76,
+    "rooms": 2,
+    "bathrooms": 1,
+    "availableFrom": "2026-10-10",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "closet",
+     "elevator",
+     "parking",
+     "induction"
+    ],
+    "thumbnailUri": "bundle://Mock/L11_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L11_1.jpg",
+     "bundle://Mock/L11_2.jpg",
+     "bundle://Mock/L11_3.jpg",
+     "bundle://Mock/bath_2.jpg"
+    ],
+    "latitude": 37.5108,
+    "longitude": 126.9638,
+    "livingEnvironment": "흑석동 한강변 신축 투룸. 거실에서 한강이 보이고 엘리베이터·주차 가능.",
+    "space3DInfo": {
+     "status": "NONE"
+    }
+   },
+   "ownerId": "9001",
+   "rank": 12
+  },
+  {
+   "listing": {
+    "listingId": "112",
+    "location": "서울 동작구 상도동 상도역 스카이오피스텔 905호",
+    "price": {
+     "deposit": 1000,
+     "monthly": 65
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 10,
+    "roomType": "OFFICETEL",
+    "floor": 9,
+    "totalFloors": 15,
+    "area": 21.84,
+    "supplyArea": 41.5,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "washer",
+     "elevator",
+     "parking",
+     "induction",
+     "pet"
+    ],
+    "thumbnailUri": "bundle://Mock/L12_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L12_1.jpg",
+     "bundle://Mock/L12_2.jpg",
+     "bundle://Mock/L12_3.jpg",
+     "bundle://Mock/bath_3.jpg"
+    ],
+    "latitude": 37.504,
+    "longitude": 126.9466,
+    "livingEnvironment": "상도역 1번 출구 도보 1분. 소형 반려동물 가능, 무인택배함.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9002",
+   "rank": 5
+  }
+ ],
+ "spaces": {
+  "101": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "101-wall-back",
+      "from": [
+       -1.9,
+       -4.2
+      ],
+      "to": [
+       1.9,
+       -4.2
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "101-wall-right",
+      "from": [
+       1.9,
+       -4.2
+      ],
+      "to": [
+       1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "101-wall-front",
+      "from": [
+       1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "101-wall-left",
+      "from": [
+       -1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       -4.2
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "101-door",
+      "type": "door",
+      "position": {
+       "x": 1.35,
+       "y": 1.05,
+       "z": 1.0
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "101-window",
+      "type": "window",
+      "position": {
+       "x": 0.0,
+       "y": 1.5,
+       "z": -4.2
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 1.4,
+       "height": 1.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.9,
+      "y": 0.0,
+      "z": -4.2
+     },
+     "max": {
+      "x": 1.9,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.8,
+    "depth": 5.2,
+    "height": 2.4,
+    "area": 19.76
+   },
+   "objects": [
+    {
+     "objectId": "101-wardrobe",
+     "category": "storage",
+     "position": {
+      "x": -1.4,
+      "y": 0.975,
+      "z": -3.85
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.9,
+      "height": 1.95,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "101-bed",
+     "category": "bed",
+     "position": {
+      "x": 1.3,
+      "y": 0.475,
+      "z": -3.15
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.1,
+      "height": 0.95,
+      "depth": 2.0
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "101-desk",
+     "category": "table",
+     "position": {
+      "x": -1.3,
+      "y": 0.375,
+      "z": -1.6
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.1,
+      "height": 0.75,
+      "depth": 0.6
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "101-chair",
+     "category": "chair",
+     "position": {
+      "x": -1.325,
+      "y": 0.475,
+      "z": -1.225
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.45,
+      "height": 0.95,
+      "depth": 0.45
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "101-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.55,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "101-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.6,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "102": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "102-wall-back",
+      "from": [
+       -1.9,
+       -3.8
+      ],
+      "to": [
+       1.9,
+       -3.8
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "102-wall-right",
+      "from": [
+       1.9,
+       -3.8
+      ],
+      "to": [
+       1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "102-wall-front",
+      "from": [
+       1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "102-wall-left",
+      "from": [
+       -1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       -3.8
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "102-door",
+      "type": "door",
+      "position": {
+       "x": 1.9,
+       "y": 1.05,
+       "z": -0.75
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "102-window",
+      "type": "window",
+      "position": {
+       "x": -1.9,
+       "y": 1.475,
+       "z": -2.25
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 1.3,
+       "height": 1.05,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.9,
+      "y": 0.0,
+      "z": -3.8
+     },
+     "max": {
+      "x": 1.9,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.8,
+    "depth": 4.8,
+    "height": 2.4,
+    "area": 18.24
+   },
+   "objects": [
+    {
+     "objectId": "102-sofa",
+     "category": "sofa",
+     "position": {
+      "x": 0.0,
+      "y": 0.425,
+      "z": -3.225
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.7,
+      "height": 0.85,
+      "depth": 0.85
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "102-shelf",
+     "category": "storage",
+     "position": {
+      "x": 1.45,
+      "y": 0.6,
+      "z": -3.575
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.8,
+      "height": 1.2,
+      "depth": 0.35
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "102-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.55,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "102-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.6,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "104": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "104-wall-back",
+      "from": [
+       -1.9,
+       -3.8
+      ],
+      "to": [
+       1.9,
+       -3.8
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "104-wall-right",
+      "from": [
+       1.9,
+       -3.8
+      ],
+      "to": [
+       1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "104-wall-front",
+      "from": [
+       1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "104-wall-left",
+      "from": [
+       -1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       -3.8
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "104-door",
+      "type": "door",
+      "position": {
+       "x": 1.9,
+       "y": 1.05,
+       "z": -0.75
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "104-window",
+      "type": "window",
+      "position": {
+       "x": -1.9,
+       "y": 1.475,
+       "z": -2.25
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 1.3,
+       "height": 1.05,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.9,
+      "y": 0.0,
+      "z": -3.8
+     },
+     "max": {
+      "x": 1.9,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.8,
+    "depth": 4.8,
+    "height": 2.4,
+    "area": 18.24
+   },
+   "objects": [
+    {
+     "objectId": "104-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.55,
+      "y": 0.775,
+      "z": -3.41
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "104-washer",
+     "category": "washerDryer",
+     "position": {
+      "x": -0.9,
+      "y": 0.425,
+      "z": -3.45
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 0.85,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "104-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.025,
+      "y": 0.44,
+      "z": -3.48
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.05,
+      "height": 0.88,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "104-desk",
+     "category": "table",
+     "position": {
+      "x": 1.2,
+      "y": 0.375,
+      "z": -1.9
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.75,
+      "depth": 0.6
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "104-chair",
+     "category": "chair",
+     "position": {
+      "x": 1.225,
+      "y": 0.475,
+      "z": -1.475
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.45,
+      "height": 0.95,
+      "depth": 0.45
+     },
+     "ownershipType": null
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "105": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "105-wall-back",
+      "from": [
+       -1.9,
+       -4.2
+      ],
+      "to": [
+       1.9,
+       -4.2
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "105-wall-right",
+      "from": [
+       1.9,
+       -4.2
+      ],
+      "to": [
+       1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "105-wall-front",
+      "from": [
+       1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "105-wall-left",
+      "from": [
+       -1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       -4.2
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "105-door",
+      "type": "door",
+      "position": {
+       "x": 1.9,
+       "y": 1.05,
+       "z": -0.75
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "105-window",
+      "type": "window",
+      "position": {
+       "x": 0.0,
+       "y": 1.5,
+       "z": -4.2
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 1.4,
+       "height": 1.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.9,
+      "y": 0.0,
+      "z": -4.2
+     },
+     "max": {
+      "x": 1.9,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.8,
+    "depth": 5.2,
+    "height": 2.4,
+    "area": 19.76
+   },
+   "objects": [
+    {
+     "objectId": "105-wardrobe",
+     "category": "storage",
+     "position": {
+      "x": 1.4,
+      "y": 0.975,
+      "z": -3.88
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.9,
+      "height": 1.95,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "105-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.55,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "105-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.6,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "106": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "106-wall-back",
+      "from": [
+       -1.8,
+       -3.8
+      ],
+      "to": [
+       1.8,
+       -3.8
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "106-wall-right",
+      "from": [
+       1.8,
+       -3.8
+      ],
+      "to": [
+       1.8,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "106-wall-front",
+      "from": [
+       1.8,
+       1.0
+      ],
+      "to": [
+       -1.8,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "106-wall-left",
+      "from": [
+       -1.8,
+       1.0
+      ],
+      "to": [
+       -1.8,
+       -3.8
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "106-door",
+      "type": "door",
+      "position": {
+       "x": 1.25,
+       "y": 1.05,
+       "z": 1.0
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "106-window",
+      "type": "window",
+      "position": {
+       "x": 0.0,
+       "y": 1.5,
+       "z": -3.8
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 1.4,
+       "height": 1.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.8,
+      "y": 0.0,
+      "z": -3.8
+     },
+     "max": {
+      "x": 1.8,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.6,
+    "depth": 4.8,
+    "height": 2.4,
+    "area": 17.28
+   },
+   "objects": [
+    {
+     "objectId": "106-wardrobe",
+     "category": "storage",
+     "position": {
+      "x": -1.3,
+      "y": 0.975,
+      "z": -3.45
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.9,
+      "height": 1.95,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "106-bed",
+     "category": "bed",
+     "position": {
+      "x": 1.2,
+      "y": 0.475,
+      "z": -2.75
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.1,
+      "height": 0.95,
+      "depth": 2.0
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "106-desk",
+     "category": "table",
+     "position": {
+      "x": -1.2,
+      "y": 0.375,
+      "z": -1.6
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.1,
+      "height": 0.75,
+      "depth": 0.6
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "106-chair",
+     "category": "chair",
+     "position": {
+      "x": -1.225,
+      "y": 0.475,
+      "z": -1.225
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.45,
+      "height": 0.95,
+      "depth": 0.45
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "106-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.45,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "106-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.5,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "108": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "108-wall-back",
+      "from": [
+       -1.6,
+       -4.6
+      ],
+      "to": [
+       1.6,
+       -4.6
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "108-wall-right",
+      "from": [
+       1.6,
+       -4.6
+      ],
+      "to": [
+       1.6,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "108-wall-front",
+      "from": [
+       1.6,
+       1.0
+      ],
+      "to": [
+       -1.6,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "108-wall-left",
+      "from": [
+       -1.6,
+       1.0
+      ],
+      "to": [
+       -1.6,
+       -4.6
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "108-door",
+      "type": "door",
+      "position": {
+       "x": 1.05,
+       "y": 1.05,
+       "z": 1.0
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "108-window",
+      "type": "window",
+      "position": {
+       "x": 0.0,
+       "y": 1.5,
+       "z": -4.6
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 1.4,
+       "height": 1.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.6,
+      "y": 0.0,
+      "z": -4.6
+     },
+     "max": {
+      "x": 1.6,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.2,
+    "depth": 5.6,
+    "height": 2.4,
+    "area": 17.92
+   },
+   "objects": [
+    {
+     "objectId": "108-bed",
+     "category": "bed",
+     "position": {
+      "x": 0.0,
+      "y": 0.475,
+      "z": -3.5
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.5,
+      "height": 0.95,
+      "depth": 2.0
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "108-nightstand-l",
+     "category": "storage",
+     "position": {
+      "x": -1.025,
+      "y": 0.25,
+      "z": -4.35
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.35,
+      "height": 0.5,
+      "depth": 0.4
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "108-nightstand-r",
+     "category": "storage",
+     "position": {
+      "x": 1.025,
+      "y": 0.25,
+      "z": -4.35
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.35,
+      "height": 0.5,
+      "depth": 0.4
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "108-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.25,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "108-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.3,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "110": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "110-wall-back",
+      "from": [
+       -1.8,
+       -4.2
+      ],
+      "to": [
+       1.8,
+       -4.2
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "110-wall-right",
+      "from": [
+       1.8,
+       -4.2
+      ],
+      "to": [
+       1.8,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "110-wall-front",
+      "from": [
+       1.8,
+       1.0
+      ],
+      "to": [
+       -1.8,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "110-wall-left",
+      "from": [
+       -1.8,
+       1.0
+      ],
+      "to": [
+       -1.8,
+       -4.2
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "110-door",
+      "type": "door",
+      "position": {
+       "x": 1.8,
+       "y": 1.05,
+       "z": -0.75
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "110-window",
+      "type": "window",
+      "position": {
+       "x": 0.0,
+       "y": 1.5,
+       "z": -4.2
+      },
+      "rotation": {
+       "yaw": 0
+      },
+      "dimensions": {
+       "width": 1.4,
+       "height": 1.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.8,
+      "y": 0.0,
+      "z": -4.2
+     },
+     "max": {
+      "x": 1.8,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.6,
+    "depth": 5.2,
+    "height": 2.4,
+    "area": 18.72
+   },
+   "objects": [
+    {
+     "objectId": "110-wardrobe",
+     "category": "storage",
+     "position": {
+      "x": 1.3,
+      "y": 0.975,
+      "z": -3.88
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.9,
+      "height": 1.95,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "110-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.45,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "110-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.5,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
+  "112": {
+   "roomGeometry": {
+    "floorHeight": 0.0,
+    "ceilingHeight": 2.4,
+    "walls": [
+     {
+      "id": "112-wall-back",
+      "from": [
+       -1.9,
+       -3.8
+      ],
+      "to": [
+       1.9,
+       -3.8
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "112-wall-right",
+      "from": [
+       1.9,
+       -3.8
+      ],
+      "to": [
+       1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "112-wall-front",
+      "from": [
+       1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       1.0
+      ],
+      "height": 2.4
+     },
+     {
+      "id": "112-wall-left",
+      "from": [
+       -1.9,
+       1.0
+      ],
+      "to": [
+       -1.9,
+       -3.8
+      ],
+      "height": 2.4
+     }
+    ],
+    "doors": [
+     {
+      "id": "112-door",
+      "type": "door",
+      "position": {
+       "x": 1.9,
+       "y": 1.05,
+       "z": -0.75
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 0.9,
+       "height": 2.1,
+       "depth": 0.1
+      }
+     }
+    ],
+    "windows": [
+     {
+      "id": "112-window",
+      "type": "window",
+      "position": {
+       "x": -1.9,
+       "y": 1.475,
+       "z": -2.25
+      },
+      "rotation": {
+       "yaw": 90
+      },
+      "dimensions": {
+       "width": 1.3,
+       "height": 1.05,
+       "depth": 0.1
+      }
+     }
+    ],
+    "boundingBox": {
+     "min": {
+      "x": -1.9,
+      "y": 0.0,
+      "z": -3.8
+     },
+     "max": {
+      "x": 1.9,
+      "y": 2.4,
+      "z": 1.0
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 3.8,
+    "depth": 4.8,
+    "height": 2.4,
+    "area": 18.24
+   },
+   "objects": [
+    {
+     "objectId": "112-sofa",
+     "category": "sofa",
+     "position": {
+      "x": 0.0,
+      "y": 0.425,
+      "z": -3.225
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.7,
+      "height": 0.85,
+      "depth": 0.85
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "112-shelf",
+     "category": "storage",
+     "position": {
+      "x": 1.45,
+      "y": 0.6,
+      "z": -3.575
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 0.8,
+      "height": 1.2,
+      "depth": 0.35
+     },
+     "ownershipType": "PERSONAL"
+    },
+    {
+     "objectId": "112-fridge",
+     "category": "refrigerator",
+     "position": {
+      "x": -1.55,
+      "y": 0.775,
+      "z": 0.67
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 0.6,
+      "height": 1.55,
+      "depth": 0.62
+     },
+     "ownershipType": "RENTAL_OPTION"
+    },
+    {
+     "objectId": "112-sink",
+     "category": "sink",
+     "position": {
+      "x": -0.6,
+      "y": 0.45,
+      "z": 0.68
+     },
+     "rotation": {
+      "yaw": 180
+     },
+     "dimensions": {
+      "width": 1.2,
+      "height": 0.9,
+      "depth": 0.6
+     },
+     "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  }
+ },
+ "roomStates": {
+  "RS101": {
+   "roomStateId": "RS101",
+   "listingId": "101",
+   "createdBy": "me",
+   "status": "READY",
+   "sourceSpaceVersion": 1,
+   "sourceObjectsVersion": 1,
+   "createdAt": "2026-09-21T01:00:00Z",
+   "removedObjectIds": [
+    "101-bed",
+    "101-desk",
+    "101-chair"
+   ]
+  },
+  "RS102": {
+   "roomStateId": "RS102",
+   "listingId": "102",
+   "createdBy": "me",
+   "status": "READY",
+   "sourceSpaceVersion": 1,
+   "sourceObjectsVersion": 1,
+   "createdAt": "2026-09-22T02:00:00Z",
+   "removedObjectIds": [
+    "102-sofa",
+    "102-shelf"
+   ]
+  },
+  "RS106": {
+   "roomStateId": "RS106",
+   "listingId": "106",
+   "createdBy": "me",
+   "status": "READY",
+   "sourceSpaceVersion": 1,
+   "sourceObjectsVersion": 1,
+   "createdAt": "2026-09-26T06:00:00Z",
+   "removedObjectIds": [
+    "106-bed",
+    "106-desk",
+    "106-chair"
+   ]
+  },
+  "RS108": {
+   "roomStateId": "RS108",
+   "listingId": "108",
+   "createdBy": "me",
+   "status": "READY",
+   "sourceSpaceVersion": 1,
+   "sourceObjectsVersion": 1,
+   "createdAt": "2026-09-28T08:00:00Z",
+   "removedObjectIds": [
+    "108-bed",
+    "108-nightstand-l",
+    "108-nightstand-r"
+   ]
+  },
+  "RS112": {
+   "roomStateId": "RS112",
+   "listingId": "112",
+   "createdBy": "me",
+   "status": "READY",
+   "sourceSpaceVersion": 1,
+   "sourceObjectsVersion": 1,
+   "createdAt": "2026-09-22T02:00:00Z",
+   "removedObjectIds": [
+    "112-sofa",
+    "112-shelf"
+   ]
+  }
+ },
+ "furniture": [
+  {
+   "furnitureId": "201",
+   "name": "슈퍼싱글 침대",
+   "category": "bed",
+   "status": "COMPLETED",
+   "modelUri": "box",
+   "dimensions": {
+    "width": 1.1,
+    "height": 0.9,
+    "depth": 2.05
+   },
+   "thumbnailUri": "bundle://Mock/F_bed.jpg"
+  },
+  {
+   "furnitureId": "202",
+   "name": "컴퓨터 책상",
+   "category": "desk",
+   "status": "COMPLETED",
+   "modelUri": "box",
+   "dimensions": {
+    "width": 1.2,
+    "height": 0.74,
+    "depth": 0.6
+   },
+   "thumbnailUri": "bundle://Mock/F_desk.jpg"
+  },
+  {
+   "furnitureId": "203",
+   "name": "2도어 옷장",
+   "category": "closet",
+   "status": "COMPLETED",
+   "modelUri": "box",
+   "dimensions": {
+    "width": 0.9,
+    "height": 1.8,
+    "depth": 0.5
+   },
+   "thumbnailUri": "bundle://Mock/F_closet.jpg"
+  },
+  {
+   "furnitureId": "204",
+   "name": "2인 소파",
+   "category": "sofa",
+   "status": "COMPLETED",
+   "modelUri": "box",
+   "dimensions": {
+    "width": 1.5,
+    "height": 0.8,
+    "depth": 0.8
+   },
+   "thumbnailUri": "bundle://Mock/F_sofa.jpg"
+  }
+ ],
+ "chats": [
+  {
+   "chatId": "C1",
+   "listingId": "102",
+   "agentId": "9002",
+   "unread": 1,
+   "messages": [
+    {
+     "fromMe": false,
+     "text": "안녕하세요, 상도역 공인중개사 김도윤입니다. 문의 주신 매물은 아직 계약 가능합니다.",
+     "minutesAgo": 2890
+    },
+    {
+     "fromMe": true,
+     "text": "혹시 관리비에 인터넷도 포함인가요?",
+     "minutesAgo": 2870
+    },
+    {
+     "fromMe": false,
+     "text": "네, 관리비 5만 원에 인터넷·수도가 포함이고 전기·가스는 따로 나옵니다.",
+     "minutesAgo": 2862
+    },
+    {
+     "fromMe": true,
+     "text": "이번 주 토요일에 방 보러 가도 될까요?",
+     "minutesAgo": 35
+    },
+    {
+     "fromMe": false,
+     "text": "토요일 오후 2시 괜찮으세요? 앱에서 3D로 먼저 둘러보고 오시면 더 좋아요.",
+     "minutesAgo": 12
+    }
+   ]
+  },
+  {
+   "chatId": "C2",
+   "listingId": "101",
+   "agentId": "9001",
+   "unread": 0,
+   "messages": [
+    {
+     "fromMe": true,
+     "text": "입주 날짜 조율 가능할까요? 10월 중순쯤 들어가고 싶어요.",
+     "minutesAgo": 1600
+    },
+    {
+     "fromMe": false,
+     "text": "집주인분께 여쭤보니 10월 15일 이후면 가능하다고 하십니다.",
+     "minutesAgo": 1540
+    },
+    {
+     "fromMe": true,
+     "text": "감사합니다! 계약 전에 한 번 더 연락드릴게요.",
+     "minutesAgo": 1535
+    }
+   ]
+  },
+  {
+   "chatId": "C3",
+   "listingId": "108",
+   "agentId": "9001",
+   "unread": 2,
+   "messages": [
+    {
+     "fromMe": false,
+     "text": "문의하신 흑석동 원룸 사진을 추가로 올려 두었어요.",
+     "minutesAgo": 190
+    },
+    {
+     "fromMe": false,
+     "text": "‘입주 예상 공간’에서 기존 가구를 뺀 모습도 확인해 보세요.",
+     "minutesAgo": 188
+    }
+   ]
+  }
+ ],
+ "jobs": [
+  {
+   "jobId": "J105",
+   "kind": "SPACE",
+   "targetId": "105",
+   "duration": 45,
+   "finished": false
+  }
+ ],
+ "defaultScraps": [
+  "106",
+  "101"
+ ]
+}

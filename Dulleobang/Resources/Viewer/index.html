@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Dulleobang Viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101214; overflow: hidden;
+               touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; touch-action: none; }
+  .lbl { font: 600 11px -apple-system, system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55);
+         padding: 2px 6px; border-radius: 4px; white-space: pre; text-align: center; pointer-events: none; }
+  .lbl.door { background: rgba(200,110,20,.75); }
+  .lbl.window { background: rgba(40,120,170,.75); }
+  .lbl.obj { background: rgba(40,40,40,.65); font-weight: 500; }
+  .lbl.furn { background: rgba(20,110,60,.8); }
+  .lbl.furn.bad { background: rgba(170,40,40,.85); }
+</style>
+<!-- ViewerAssetHandler 가 CDN 또는 vendor/ 경로로 채운다 -->
+<script type="importmap">%%IMPORTMAP%%</script>
+<script>
+  // 모듈(three.js 등)을 못 불러오면 앱에 알린다 (네트워크/CDN 문제)
+  window.__dvPost = function (m) { try { window.webkit.messageHandlers.dulleobang.postMessage(m); } catch (e) { console.log(m); } };
+  window.addEventListener('error', function (e) { window.__dvPost({ type: 'error', message: String(e.message || e) }); });
+  window.addEventListener('unhandledrejection', function (e) { window.__dvPost({ type: 'error', message: String(e.reason && e.reason.message || e.reason) }); });
+  setTimeout(function () {
+    if (!window.DV) window.__dvPost({ type: 'error', message: '3D 뷰어 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하거나 vendor/ 에 로컬 사본을 넣어 주세요.' });
+  }, 15000);
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<script type="module" src="./viewer.js"></script>
+</body>
+</html>
