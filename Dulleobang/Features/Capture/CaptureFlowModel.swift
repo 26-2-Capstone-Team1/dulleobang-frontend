@@ -33,18 +33,33 @@ final class CaptureFlowModel: ObservableObject {
         case done
         case share(URL)
         case failed(String)
+        case wideShot(WideStep)         // 촬영을 마친 뒤 0.5× 광각으로 가구 사진 (ARSession 은 멈춘 상태)
     }
 
     @Published var phase: Phase = .ready
     @Published var stats = CaptureStats()
     @Published var notice: String?
     /// 정지를 눌렀는데 제자리에서만 찍었거나 바닥이 덜 찍혔을 때 확인 (더 찍기 / 그대로 끝내기)
-    struct StopWarning: Equatable { let title: String; let message: String }
+    struct StopWarning: Equatable {
+        let title: String
+        let message: String
+        var offersWide = false          // "끝내고 0.5× 광각으로 찍기" 버튼을 함께 보여 줌
+    }
     @Published var stopWarning: StopWarning?
+    /// 0.5× 광각 사진 단계의 한 장 (화면 표시용)
+    struct WideStep: Equatable {
+        let index: Int
+        let total: Int
+        let label: String               // "소파"
+        let alsoCount: Int              // 같은 모양이라 이 사진을 함께 쓰는 가구 수
+        let problem: String             // notWhole · blocked
+    }
+    @Published private(set) var wideBusy = false
 
     let target: Target
     let session = ARSession()
     let roomPlan = RoomPlanController()
+    let wideCamera = UltraWideCamera()
     let useRoomPlan: Bool
 
     private var recorder: CaptureRecorder?
@@ -52,6 +67,11 @@ final class CaptureFlowModel: ObservableObject {
     private var zipDir: URL?
     private let haptics = UINotificationFeedbackGenerator()
     private var lastBuzz: [CaptureAlert: Date] = [:]
+    private var wideTargets: [WideShotTarget] = []
+    private var wideShots: [WideShotsFile.Shot] = []
+    private var wideIndex = 0
+    private var wideDir: URL?
+    private var wideContinuation: CheckedContinuation<Void, Never>?
 
     var kind: CaptureKind {
         switch target {
@@ -81,6 +101,8 @@ final class CaptureFlowModel: ObservableObject {
 
     func disappear() {
         work?.cancel()
+        endWideShots()
+        wideCamera.stop()
         if phase == .recording { recorder?.discard() }
         recorder?.stopSampling()
         session.pause()
@@ -93,7 +115,11 @@ final class CaptureFlowModel: ObservableObject {
             recorder = r
             lastBuzz = [:]
             haptics.prepare()
-            if useRoomPlan { roomPlan.start() }
+            if useRoomPlan {
+                // 스캔 중 RoomPlan 가구 상자 → 가구 전체 사진 점검
+                roomPlan.onFurniture = { [weak self] boxes in self?.recorder?.updateFurniture(boxes) }
+                roomPlan.start()
+            }
             r.start()
             phase = .recording
         } catch {
@@ -102,7 +128,8 @@ final class CaptureFlowModel: ObservableObject {
     }
 
     /// force = 제자리 경고를 보고도 "그대로 끝내기" 를 고름
-    func stop(force: Bool = false) {
+    /// wide = 끝낸 뒤 0.5× 광각 사진 단계로 (가구 경고에서 "끝내고 0.5× 광각으로 찍기")
+    func stop(force: Bool = false, wide: Bool = false) {
         guard let recorder, phase == .recording else { return }
         guard recorder.frameCount >= minFrames else {
             notice = "프레임이 너무 적습니다 (\(recorder.frameCount)/\(minFrames)). 조금 더 촬영해 주세요"
@@ -123,12 +150,25 @@ final class CaptureFlowModel: ObservableObject {
                         + "폰을 아래로 30~45° 기울여 바닥이 화면 절반쯤 보이게 한 바퀴 더 찍을까요?")
                 return
             }
+            let missing = recorder.furnitureMissing
+            if !missing.isEmpty {
+                let names = missing.prefix(4).joined(separator: ", ") + (missing.count > 4 ? " 외 \(missing.count - 4)개" : "")
+                let wideOK = recorder.furnitureNeedsWide
+                stopWarning = StopWarning(
+                    title: "전체 사진이 없는 가구가 있어요",
+                    message: "아직 전체가 한 화면에 나온 사진이 없는 가구: \(names)\n"
+                        + "가구를 따로 3D 로 만들려면 가구마다 전체 사진이 한 장씩 필요해요. 화면 아래 안내를 따라 조금 더 찍을까요?"
+                        + (wideOK ? "\n방이 좁아 물러설 수 없었다면, 끝낸 뒤 0.5× 광각으로 한 장씩 찍을 수 있어요." : ""),
+                    offersWide: wideOK)
+                return
+            }
         }
         stopWarning = nil
-        work = Task { await finish(recorder) }
+        work = Task { await finish(recorder, wide: wide) }
     }
 
-    /// 녹화 중 통계 반영. 새 경고가 뜨면 진동(같은 경고는 4초에 한 번) + VoiceOver 안내
+    /// 녹화 중 통계 반영. 새 경고가 뜨면 진동(같은 경고는 4초에 한 번) + VoiceOver 안내,
+    /// 가구 전체 사진이 새로 찍히면 '성공' 진동 + "소파 전체 사진 ✓", 가구 안내 대상이 바뀌면 VoiceOver 로 읽는다
     private func apply(_ s: CaptureStats) {
         if phase == .recording, let alert = s.alert, alert != stats.alert {
             let now = Date()
@@ -137,6 +177,16 @@ final class CaptureFlowModel: ObservableObject {
                 haptics.prepare()
                 UIAccessibility.post(notification: .announcement, argument: alert.title)
                 lastBuzz[alert] = now
+            }
+        }
+        if phase == .recording {
+            let before = Dictionary(stats.furniture.map { ($0.id, $0.state) }, uniquingKeysWith: { a, _ in a })
+            if let fresh = s.furniture.first(where: { $0.state == .done && before[$0.id] != nil && before[$0.id] != .done }) {
+                haptics.notificationOccurred(.success)
+                haptics.prepare()
+                UIAccessibility.post(notification: .announcement, argument: "\(fresh.label) 전체 사진 ✓")
+            } else if s.alert == nil, let tip = s.furnitureTip, tip.objectId != stats.furnitureTip?.objectId {
+                UIAccessibility.post(notification: .announcement, argument: tip.title)
             }
         }
         stats = s
@@ -151,15 +201,18 @@ final class CaptureFlowModel: ObservableObject {
         if !useRoomPlan { ARCameraView.run(session) }
     }
 
-    private func finish(_ recorder: CaptureRecorder) async {
+    private func finish(_ recorder: CaptureRecorder, wide: Bool = false) async {
         do {
             recorder.stopSampling()
             var extras: [String: Data] = [:]
+            var furniture: [FurnitureBox]?
             if useRoomPlan {
                 phase = .finishing("방 구조 분석 중 (RoomPlan)…")
+                roomPlan.onFurniture = nil                      // 가구 점검은 아래 최종 상자로 다시 한다
                 roomPlan.stop()
                 if let room = await roomPlan.waitForResult() {
                     extras = RoomPlanExport.files(from: room)
+                    furniture = RoomPlanExport.furniture(from: room)
                 } else if let msg = roomPlan.errorMessage {
                     notice = "RoomPlan 결과 없이 진행합니다: \(msg)"
                 }
@@ -167,7 +220,17 @@ final class CaptureFlowModel: ObservableObject {
             session.pause()
 
             phase = .finishing("파일 정리 중…")
-            let dir = try await recorder.finalize(extraFiles: extras, roomplan: !extras.isEmpty)
+            let dir = try await recorder.finalize(extraFiles: extras, roomplan: !extras.isEmpty, furniture: furniture)
+            // 0.5× 광각 사진 (가구 경고에서 고른 경우): ARSession 을 멈춘 지금 광각 카메라를 연다
+            if wide {
+                let targets = recorder.wideShotTargets()
+                if !targets.isEmpty {
+                    let shots = await runWideShots(targets, in: dir)
+                    try Task.checkCancellation()
+                    if !shots.isEmpty { try WideShotsFile.write(shots, to: dir) }
+                    phase = .finishing("파일 정리 중…")
+                }
+            }
             let zip = try await CapturePackager.zip(dir)
             zipDir = dir
 
@@ -208,6 +271,67 @@ final class CaptureFlowModel: ObservableObject {
             self?.phase = .processing("AI 처리 중 (\(j.status))\(pct)")
         }
         phase = job.isDone ? .done : .failed(job.message ?? "AI 처리에 실패했습니다")
+    }
+
+    // MARK: 0.5× 광각 사진 (촬영을 마친 뒤)
+
+    /// 가구마다 한 장씩 (건너뛸 수 있음). 화면은 phase = .wideShot 으로 그리고, 마지막 장을 찍거나 건너뛰면 돌아온다
+    private func runWideShots(_ targets: [WideShotTarget], in dir: URL) async -> [WideShotsFile.Shot] {
+        wideTargets = targets
+        wideShots = []
+        wideDir = dir
+        wideCamera.start()
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            wideContinuation = cont
+            showWideStep(0)
+        }
+        wideCamera.stop()
+        return wideShots
+    }
+
+    private func showWideStep(_ i: Int) {
+        guard i < wideTargets.count else { endWideShots(); return }
+        wideIndex = i
+        let t = wideTargets[i]
+        phase = .wideShot(WideStep(index: i, total: wideTargets.count, label: t.label,
+                                   alsoCount: t.alsoFor.count, problem: t.problem))
+    }
+
+    /// 셔터
+    func shootWide() {
+        guard case .wideShot = phase, !wideBusy, let dir = wideDir, wideIndex < wideTargets.count else { return }
+        let target = wideTargets[wideIndex], index = wideIndex
+        wideBusy = true
+        Task {
+            defer { wideBusy = false }
+            do {
+                let photo = try await wideCamera.capture()
+                guard case .wideShot = phase, wideIndex == index else { return }
+                wideShots.append(try WideShotsFile.save(photo, index: wideShots.count, target: target, in: dir))
+                haptics.notificationOccurred(.success)
+                haptics.prepare()
+                showWideStep(index + 1)
+            } catch is CancellationError {
+            } catch {
+                notice = "광각 사진을 찍지 못했어요: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func skipWide() {
+        guard case .wideShot = phase, !wideBusy else { return }
+        showWideStep(wideIndex + 1)
+    }
+
+    func skipAllWide() {
+        guard case .wideShot = phase, !wideBusy else { return }
+        endWideShots()
+    }
+
+    private func endWideShots() {
+        let cont = wideContinuation
+        wideContinuation = nil
+        cont?.resume()
     }
 
     /// 업로드 실패 후 같은 zip 으로 재시도

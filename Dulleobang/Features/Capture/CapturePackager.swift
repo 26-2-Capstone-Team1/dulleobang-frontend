@@ -2,7 +2,9 @@ import Foundation
 
 /// 촬영 폴더 → capture.zip. 외부 라이브러리 없이 NSFileCoordinator(.forUploading) 의 내장 zip 기능을 쓴다.
 /// zip 안의 구조:  capture/poses.json, capture/meta.json, capture/frames/000000.jpg, capture/depth/…, capture/confidence/…
-///                 (LiDAR + RoomPlan 시) capture/roomplan.json, capture/roomplan_structure.json, capture/roomplan.usdz
+///                 (LiDAR + RoomPlan 시) capture/roomplan.json, capture/roomplan_structure.json, capture/roomplan.usdz,
+///                 capture/furniture_shots.json (가구별 전체 사진 frameId + 사진 속 상자 위치)
+///                 (끝낼 때 0.5× 광각을 고른 경우) capture/wide/NNN.jpg, capture/wide_shots.json
 enum CapturePackager {
     static func zip(_ captureDir: URL) async throws -> URL {
         try await Task.detached(priority: .userInitiated) {

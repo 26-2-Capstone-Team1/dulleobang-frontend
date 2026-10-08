@@ -127,6 +127,32 @@ zip 은 파일 앱 › 나의 iPhone › 둘러방 › captures 에도 남습니
 방 바닥보다 6~25 cm 낮은 현관 · 욕실 · 베란다 바닥(바로 위에 3배 넘게 큰 바닥이 있는 수평면)도 바닥으로 셉니다. 바닥 높이를 못 찾는 동안은 이전 추정을 유지합니다.
 이동 범위는 카메라가 지나간 위치의 바닥 기준 상자 대각선이라, 손떨림이 쌓여 늘어나지 않습니다(예전 "이동 거리" 는 손떨림까지 더해 제자리 촬영도 4.8 m 로 셌음).
 
+**가구 전체 사진 (방 촬영 · LiDAR + RoomPlan)** — 가구마다 *전체가 한 화면에, 가려지지 않고, 충분히 크게* 찍힌 사진이 한 장 이상 있게 안내합니다
+(가구를 따로 3D 로 만들거나 재질을 다시 입힐 때 쓰는 대표 사진). 코드: `Features/Capture/FurnitureShots.swift`(`FurnitureShotConfig` 에 기준값).
+- RoomPlan 이 스캔 중에 고쳐 주는 가구 상자(`RoomCaptureSessionDelegate.captureSession(_:didUpdate:)`)와 프레임마다의 카메라 포즈 · LiDAR 깊이(64×48 격자)로 10 Hz 마다 점검합니다.
+- 통과 조건: ① 상자 꼭짓점 8개가 모두 화면 안(가장자리 2% 여유) ② 카메라 쪽 옆면 · 윗면에 면마다 5×5 점을 찍어 LiDAR 와 비교해 전체 85% 이상 · 면마다 60% 이상 안 가려짐
+  (상자 면보다 10 cm + 거리의 3% 넘게 앞에 무언가 있으면 가려진 점. 단 그것이 가구 자신 · 위에 놓인 물건(컵 · 책 · TV) · 바닥 · 이 가구에 붙은 더 작은 가구(식탁에 넣은 의자)면 치지 않음)
+  ③ 화면 가로나 세로의 30% 이상 ④ 예상 흔들림 6 px 이하. 깊이를 못 재면(5 m 밖 등) 가려짐은 모르는 것으로 보고 ①③④ 로만 판단합니다.
+- 통과한 프레임이 **저장되면** 화면 위 목록의 그 가구가 초록 ✓ 로 바뀌고 '성공' 진동이 옵니다. 아직 전체 사진이 없는 가구가 지금 화면에서 통과하면 이동 · 회전이 적어도 그 프레임을 저장합니다(가구마다 한 번).
+- 같은 종류 · 같은 크기(가로 · 깊이 · 높이 ±6 cm) 가구는 하나만 찍혀도 함께 ✓ (민트, 식탁 의자 6개 등). 식탁 밑에 넣은 의자는 식탁 반대쪽(의자가 바깥으로 나온 쪽)에서 보면 통과합니다.
+- 첫 바퀴(12방향 + 2 m)를 마쳤거나 60초가 지나면 화면 아래 보라 띠로 아직 전체 사진이 없는 가구 하나를 안내합니다:
+  화면에 걸려 있으면 이유(다 안 들어와요 → 한두 걸음 물러나기 · ○○에 가려져 있어요 → 가리는 것이 없는 쪽으로 · 너무 작게 보여요 → 가까이 · 흔들렸어요),
+  화면 밖이면 가장 가까운 가구 쪽(왼쪽 · 오른쪽 · 뒤). 촬영 경고(빨강 · 주황)가 떠 있으면 경고가 먼저입니다. 안내 문구도 바닥 다음 단계로 "가구 n개는 아직 전체 사진이 없어요" 를 보여 줍니다.
+- RoomPlan 이 상자를 8 cm · 8° 넘게 고치거나 가구를 나중에 찾으면, 지금까지 저장한 프레임으로 다시 점검합니다. 정지를 누를 때 아직 없는 가구가 있으면 "전체 사진이 없는 가구가 있어요" 를 묻습니다.
+- 촬영을 마치면 RoomPlan **최종** 가구 상자로 저장한 프레임을 모두 다시 점검해 `furniture_shots.json` 을 씁니다(아래 형식).
+
+**방이 좁아 다 안 들어올 때 (폰 돌리기 · 촬영 뒤 0.5× 광각)** — ARKit(LiDAR · RoomPlan)은 스캔 중 **1× 카메라 영상만** 앱에 줍니다.
+world tracking 이 울트라 와이드를 내부에서 쓰지만 API 로 열어 주지 않고([Apple 포럼 답변](https://developer.apple.com/forums/thread/831657)),
+스캔 중에 다른 카메라를 따로 열면 ARSession 이 끊겨 전체 촬영본의 포즈가 망가질 수 있습니다. 그래서 두 단계로 나눴습니다.
+- 스캔 중: 1× 화각은 센서 긴 쪽(1920) 약 65° · 짧은 쪽(1440) 약 51° 입니다. 가구가 짧은 쪽으로만 넘치면 안내 띠가
+  "폰을 가로로(또는 세로로) 돌려 찍으면 더 넓게 들어와요" 로 바뀝니다(세로로 든 폰에서 좌우 51° → 가로로 들면 65°, 약 30% 넓어짐).
+  그래도 같은 가구가 8초 넘게 다 안 들어오면 "촬영을 마칠 때 0.5× 광각으로 한 장 찍을 수 있어요" 를 안내합니다.
+- 정지를 누를 때: 전체 사진이 없는 가구 중 '다 안 들어옴 · 가려짐' 인 것이 있으면 경고에 **끝내고 0.5× 광각으로 찍기** 버튼이 생깁니다.
+  고르면 RoomPlan 최종 결과를 받고 ARSession 을 멈춘 뒤 0.5× 카메라(AVFoundation `builtInUltraWideCamera`)를 열어,
+  그런 가구만 한 장씩 찍게 합니다(같은 모양 가구는 한 장, '다 안 들어옴' 먼저, 건너뛰기 가능). 저장: `wide/NNN.jpg` + `wide_shots.json`.
+- 0.5× 사진에는 **ARKit 포즈 · LiDAR 깊이가 없습니다.** 서버에서 frames/ 와 특징점 매칭으로 위치를 찾거나(COLMAP `image_registrator` · hloc),
+  단일 사진 3D(SAM 3D) 입력 · SAM 3 마스크(글자 프롬프트 = category)로 쓰세요. `K` 는 AVFoundation 이 준 근사값(왜곡 보정된 사진 기준)입니다.
+
 ## 3. capture.zip 형식 (AI 팀원용)
 
 ```
@@ -142,6 +168,9 @@ capture/
   roomplan.json             (LiDAR+RoomPlan) Apple CapturedRoom 원본 JSON
   roomplan_structure.json   (LiDAR+RoomPlan) 우리 API 형식 roomGeometry/roomDimensions/objects — 구조 추출 정답·대체값
   roomplan.usdz             (LiDAR+RoomPlan) 파라메트릭 3D 모델
+  furniture_shots.json      (LiDAR+RoomPlan) 가구별 '전체 사진' frameId + 그 사진 속 상자 위치(bbox) (아래)
+  wide/000.jpg …            (끝낼 때 0.5× 광각을 고른 경우) 0.5× 광각 가구 사진, 센서 원래 방향(가로) — 포즈 · 깊이 없음
+  wide_shots.json           (위와 같음) 사진마다 objectId · 같은 모양 가구(alsoFor) · 찍은 이유 · 해상도 · 근사 K
 ```
 
 `poses.json` 항목:
@@ -154,6 +183,32 @@ capture/
 `exposureS` 는 셔터 시간(초), `blurPx` 는 저장 순간의 예상 흔들림(px, JPG 해상도 기준), `floorShare` 는 그 프레임의 LiDAR 점 중 바닥인 비율입니다
 (흐린 프레임 거르기 · 바닥 사진 고르기에 쓰세요, 예전 촬영본에는 없음). `meta.json` 에는 `floorHeightM`(LiDAR 로 찾은 바닥 높이, ARKit 월드 y),
 `walkedFloorCoverage`(걸어온 길 중 바닥을 찍은 곳의 비율), `floorPhotos`(바닥 사진 수)가 들어갑니다.
+
+`furniture_shots.json` (가구마다 전체가 한 화면에 가려지지 않고 찍힌 프레임. objectId 는 `roomplan_structure.json` 과 같음):
+```json
+{ "version": 1, "frameCount": 153,
+  "rule": { "minVisible": 0.85, "minFaceVisible": 0.6, "minFill": 0.3, "maxBlurPx": 6, "marginFrac": 0.02, "twinTolM": 0.06 },
+  "objects": [
+    { "objectId": "…", "category": "chair", "label": "의자 2", "status": "full",
+      "shots": [ { "frameId": 37, "score": 0.91, "visible": 1.0, "fill": 0.5, "viewYawDeg": 45.0, "distanceM": 1.86,
+                   "bbox": [612.4, 233.0, 1381.9, 1197.5] } ] },
+    { "objectId": "…", "category": "chair", "label": "의자 3", "status": "shared", "sharedWith": "…",
+      "problem": "blocked", "blockedBy": "…", "tuckedInto": "…", "shots": [ … 가장 나았던 1장 ] },
+    { "objectId": "…", "category": "sofa", "label": "소파", "status": "missing", "problem": "notWhole", "shots": [ … ] } ] }
+```
+`status`: `full` = 전체 사진 있음(점수 순 · 바라보는 방향이 40° 이상 다른 사진 최대 3장), `shared` = 같은 모양 가구(`sharedWith`)의 사진으로 대신, `missing` = 없음
+(`problem`: notWhole 다 안 들어옴 · blocked 가려짐(`blockedBy` 가린 가구) · tooFar 작음 · blurry 흔들림 · notInView 안 찍힘, `shots` 에는 가장 나았던 1장).
+`bbox` 는 그 JPG 속 RoomPlan 상자 범위 `[u0, v0, u1, v1]`(px, 센서 원래 방향 = K 와 같은 좌표) → SAM 3 상자 프롬프트로 가구 마스크를 뽑는 데 쓰세요.
+`tuckedInto` = 부피의 15% 이상이 그 가구 상자 안(식탁 밑에 넣은 의자 → 식탁)이라 어느 방향에서도 일부는 안 보이는 가구. `visible` 이 없으면 LiDAR 로 가려짐을 못 잰 것입니다.
+
+`wide_shots.json` (촬영을 마친 뒤 0.5× 광각으로 찍은 가구 사진):
+```json
+{ "version": 1, "camera": "builtInUltraWideCamera (0.5x) · AVFoundation · ARKit/RoomPlan 스캔을 마친 뒤",
+  "shots": [ { "file": "wide/000.jpg", "objectId": "…", "alsoFor": ["…"], "category": "sofa", "label": "소파",
+               "reason": "notWhole", "width": 4032, "height": 3024,
+               "K": { "fx": 1580.2, "fy": 1580.2, "cx": 2016.0, "cy": 1512.0 }, "takenAt": "2026-10-08T08:12:31Z" } ] }
+```
+`objectId` · `alsoFor` 는 `furniture_shots.json` · `roomplan_structure.json` 과 같은 id 입니다(같은 모양 가구는 이 사진 한 장을 함께 씀).
 
 - **좌표계**: ARKit 월드 = **미터**, Y-up, 오른손. `T_wc` 는 camera→world, row-major, `ARCamera.transform` 그대로.
 - **카메라 축**: x 오른쪽, y 위, −z 정면 = OpenGL / nerfstudio `transforms.json` 규약. (COLMAP/OpenCV 는 y·z 부호 반대)

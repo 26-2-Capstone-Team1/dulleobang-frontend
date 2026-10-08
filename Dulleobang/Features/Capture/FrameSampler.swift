@@ -16,6 +16,8 @@ struct CaptureStats: Equatable {
     var hasDepth = false
     var alert: CaptureAlert?          // 지금 화면에 띄울 경고 (없으면 nil)
     var floorCoverage: Double?        // 걸어온 길 중 바닥 사진을 찍은 곳의 비율 (LiDAR 없으면 nil)
+    var furniture: [FurnitureChip] = []  // 가구별 전체 사진 상태 (방 촬영 · RoomPlan 이 찾은 가구, FurnitureShotTracker)
+    var furnitureTip: FurnitureTip?   // 첫 바퀴 뒤, 아직 전체 사진이 없는 가구 하나를 안내 (없으면 nil)
     var hint = "시작 버튼을 눌러 촬영을 시작하세요"
 }
 
@@ -43,12 +45,13 @@ struct FrameSampler {
     var coverage: Double { Double(yawBins.filter { $0 }.count) / Double(Self.yawBinCount) }
 
     /// 저장해야 하면 true 를 반환하고 내부 상태(누적 거리, 커버리지)를 갱신한다.
-    mutating func shouldKeep(_ T: simd_float4x4, time: Double, tracking: TrackingState) -> Bool {
+    /// force = 이동 · 회전 기준을 건너뛰고 저장 (아직 전체 사진이 없는 가구가 지금 화면에서 통과할 때). 간격 · 추적 상태는 그대로 본다
+    mutating func shouldKeep(_ T: simd_float4x4, time: Double, tracking: TrackingState, force: Bool = false) -> Bool {
         guard tracking == .normal, time - lastTime >= minInterval else { return false }
         if let last {
             let dT = simd_distance(T.columns.3.xyz, last.columns.3.xyz)
             let dR = Self.rotationAngle(last, T)
-            guard dT >= minTranslation || dR >= minRotationRad else { return false }
+            guard force || dT >= minTranslation || dR >= minRotationRad else { return false }
             distance += dT
         }
         last = T
@@ -75,9 +78,10 @@ struct FrameSampler {
         return ang
     }
 
-    /// 화면 아래 안내 문구. spanM = 카메라가 실제로 움직인 범위, floorCoverage = 걸어온 길 중 바닥을 찍은 곳의 비율 (CaptureCoach)
+    /// 화면 아래 안내 문구. spanM = 카메라가 실제로 움직인 범위, floorCoverage = 걸어온 길 중 바닥을 찍은 곳의 비율 (CaptureCoach),
+    /// furnitureMissing = 아직 전체 사진이 없는 가구 수 (FurnitureShotTracker, 같은 모양 가구로 대신할 수 있는 것은 뺌)
     func hint(kind: CaptureKind, tracking: TrackingState, spanM: Float, minSpanM: Float, goodFrames: Int,
-              floorCoverage: Double? = nil, floorTarget: Double = 0.85) -> String {
+              floorCoverage: Double? = nil, floorTarget: Double = 0.85, furnitureMissing: Int = 0) -> String {
         switch tracking {
         case .none: return "카메라를 천천히 움직여 주변을 비춰 주세요"
         case .limited: return "위치를 잡는 중이에요. 천천히 움직여 주세요"
@@ -95,6 +99,9 @@ struct FrameSampler {
             if covered < Self.yawBinCount { return "아직 비추지 않은 방향이 있어요 (\(covered)/\(Self.yawBinCount))" }
             if let floor = floorCoverage, floor < floorTarget {
                 return "이제 폰을 아래로 30~45° 기울여 걸어온 길의 바닥을 찍어 주세요 (바닥 \(Int((floor * 100).rounded()))%)"
+            }
+            if furnitureMissing > 0 {
+                return "가구 \(furnitureMissing)개는 아직 전체 사진이 없어요. 위 목록의 회색 가구를 하나씩 전체가 한 화면에 들어오게 찍어 주세요"
             }
             if kept < goodFrames { return "좋아요. 높이를 바꿔 한 바퀴 더 돌면 더 선명해져요 (\(kept)/\(goodFrames)장)" }
             return "충분히 촬영했습니다. 종료할 수 있어요"

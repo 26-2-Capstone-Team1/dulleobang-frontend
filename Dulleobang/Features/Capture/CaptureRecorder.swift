@@ -101,6 +101,10 @@ final class CaptureRecorder {
     private let group = DispatchGroup()
     private var writeErrors = 0
     private var depthSummaries: [DepthFrameSummary] = []             // depth.json 용 (메인 스레드에서만 추가)
+    private var shots = FurnitureShotTracker()                        // 가구 전체 사진 점검 (방 촬영 · RoomPlan 이 찾은 가구)
+    private var firstFrameTime: Double?                               // 가구 안내를 1분 뒤부터 띄우려고
+    private var lastFurnitureReport: FurnitureShotsFile?              // finalize 에서 쓴 furniture_shots.json (광각 사진 대상 고르기)
+    private var lastFurnitureBoxes: [FurnitureBox] = []
 
     private(set) var isRecording = false
     var frameCount: Int { poses.count }
@@ -113,6 +117,16 @@ final class CaptureRecorder {
     /// 바닥이 이보다 적게 찍혔으면 끝낼 때 한 번 더 묻는다
     var floorAlertBelow: Double { coach.config.floorAlertBelow }
     var hasDepth: Bool { depthSize != nil }                           // LiDAR 깊이가 한 장이라도 저장됐는지
+    /// 아직 전체 사진이 없는 가구 이름 (같은 모양 가구로 대신할 수 있는 것은 뺀다). 끝낼 때 한 번 더 묻는다
+    var furnitureMissing: [String] { kind == .room ? shots.missingLabels : [] }
+    /// 끝낼 때 0.5× 광각 사진을 제안할지: 광각 카메라가 있고, '다 안 들어옴 · 가려짐' 때문에 전체 사진이 없는 가구가 있음
+    var furnitureNeedsWide: Bool { kind == .room && shots.config.wideCameraAvailable && shots.needsWideShot }
+
+    /// finalize 뒤: 0.5× 광각으로 찍을 가구 (RoomPlan 최종 상자 기준, 같은 모양은 한 장으로)
+    func wideShotTargets() -> [WideShotTarget] {
+        guard let report = lastFurnitureReport else { return [] }
+        return WideShotTarget.plan(report: report, boxes: lastFurnitureBoxes, tol: shots.config.twinTolM)
+    }
     private let osVersion = "iOS \(UIDevice.current.systemVersion)"     // init(메인 스레드)에서 읽어 둔다
 
     init(session: ARSession, kind: CaptureKind) throws {
@@ -125,6 +139,9 @@ final class CaptureRecorder {
         var coachConfig = CaptureCoach.Config()
         coachConfig.loopSpanM = cfg.roomMinSpanM
         coach = CaptureCoach(config: coachConfig, checksWalking: kind == .room)
+        var shotConfig = FurnitureShotConfig()
+        shotConfig.wideCameraAvailable = kind == .room && UltraWideCamera.isAvailable
+        shots = FurnitureShotTracker(config: shotConfig)
         dir = Self.root.appendingPathComponent(captureId, isDirectory: true)
                        .appendingPathComponent("capture", isDirectory: true)
         for sub in ["frames", "depth", "confidence", "depth_vis", "confidence_vis"] {
@@ -153,7 +170,9 @@ final class CaptureRecorder {
 
     /// 쓰기 완료를 기다린 뒤 poses.json / meta.json / 추가 파일(RoomPlan 결과 등)을 쓰고 폴더 URL 을 돌려준다.
     /// 호출 전에 메인 스레드에서 stopSampling() 을 불러 둘 것 (Timer 는 설치한 스레드에서만 해제 가능).
-    func finalize(extraFiles: [String: Data] = [:], roomplan: Bool = false) async throws -> URL {
+    /// furniture = RoomPlan 최종 가구 상자 (nil 이면 촬영 중 마지막 상자) → furniture_shots.json
+    func finalize(extraFiles: [String: Data] = [:], roomplan: Bool = false,
+                  furniture: [FurnitureBox]? = nil) async throws -> URL {
         await withCheckedContinuation { cont in group.notify(queue: .main) { cont.resume() } }
         // 바닥 높이는 촬영 중에 정해지므로, 마지막 추정으로 프레임마다 바닥 비율을 다시 적는다
         let shares = coach.floorShares()
@@ -182,6 +201,13 @@ final class CaptureRecorder {
                 frames: depthSummaries.sorted { $0.frameId < $1.frameId })
             try enc.encode(file).write(to: dir.appendingPathComponent("depth.json"))
         }
+        // 가구별 전체 사진: RoomPlan 최종 상자로 저장한 프레임을 모두 다시 점검한다 (샘플링 · RoomPlan 갱신은 이미 멈춤)
+        if kind == .room, shots.hasFurniture || !(furniture ?? []).isEmpty {
+            let report = shots.report(finalBoxes: furniture)
+            lastFurnitureReport = report
+            lastFurnitureBoxes = furniture ?? shots.boxes
+            try enc.encode(report).write(to: dir.appendingPathComponent("furniture_shots.json"))
+        }
         for (name, data) in extraFiles { try data.write(to: dir.appendingPathComponent(name)) }
         return dir
     }
@@ -189,6 +215,12 @@ final class CaptureRecorder {
     func discard() {
         stopSampling()
         try? FileManager.default.removeItem(at: dir.deletingLastPathComponent())
+    }
+
+    /// RoomPlan 이 가구 상자를 고칠 때마다 (메인 스레드). 촬영을 멈춘 뒤에 온 갱신은 무시한다
+    func updateFurniture(_ boxes: [FurnitureBox]) {
+        guard isRecording, kind == .room else { return }
+        shots.updateBoxes(boxes)
     }
 
     // MARK: - 샘플링
@@ -207,16 +239,32 @@ final class CaptureRecorder {
                                textureScore: FrameProbe.textureScore(frame.capturedImage),
                                directionsCovered: sampler.coverage))
         }
-        defer { publish(tracking: tracking, hasDepth: depthData != nil) }
+        if firstFrameTime == nil { firstFrameTime = frame.timestamp }
+        defer { publish(tracking: tracking, hasDepth: depthData != nil, time: frame.timestamp, camera: cam.transform) }
+
+        // 가구 전체 사진 (방 촬영 · RoomPlan 이 찾은 가구가 있을 때): 매 폴링 점검하고, 아직 전체 사진이 없는 가구가
+        // 지금 프레임에서 통과하면 이동 · 회전이 적어도 이 프레임을 저장한다 (가구마다 한 번)
+        let w = Int(cam.imageResolution.width), h = Int(cam.imageResolution.height)
+        let makeView = { (grid: DepthGrid) -> ShotView in
+            ShotView(frameId: nil, time: frame.timestamp, transform: cam.transform,
+                     fx: K.columns.0.x, fy: K.columns.1.y, cx: K.columns.2.x, cy: K.columns.2.y,
+                     width: w, height: h, depth: grid, blurPx: self.coach.frameBlurPx)
+        }
+        var shotView: ShotView?
+        if kind == .room, tracking == .normal, shots.hasFurniture, let depthData,
+           let grid = FrameProbe.depthGrid(depth: depthData.depthMap, confidence: depthData.confidenceMap) {
+            shotView = makeView(grid)
+        }
+        var wantsShot = false
+        if let v = shotView { wantsShot = shots.evaluateLive(v) }
 
         // 쓰기가 밀리면 이번 프레임은 건너뛴다 (카메라 버퍼 풀 고갈 방지)
         guard inFlight < 3 else { return }
         // 많이 흔들린 프레임은 저장하지 않는다 → 화면에는 '너무 빨라요' 경고가 뜬다
         guard coach.frameBlurPx < coach.config.skipBlurPx else { return }
-        guard sampler.shouldKeep(cam.transform, time: frame.timestamp, tracking: tracking) else { return }
+        guard sampler.shouldKeep(cam.transform, time: frame.timestamp, tracking: tracking, force: wantsShot) else { return }
 
         let id = poses.count
-        let w = Int(cam.imageResolution.width), h = Int(cam.imageResolution.height)
         // 저장한 프레임의 LiDAR 점으로 바닥이 화면에 얼마나 나왔는지 센다 (바닥 경고 · 안내 문구 · meta.json)
         var floorShare: Double?
         if kind == .room, let depthData {
@@ -233,6 +281,12 @@ final class CaptureRecorder {
                                 blurPx: (coach.frameBlurPx * 10).rounded() / 10,
                                 floorShare: floorShare.map { ($0 * 1000).rounded() / 1000 }))
         colorSize = colorSize ?? [w, h]
+        // 저장한 프레임은 가구 점검용으로 보관한다 (가구가 나중에 발견되거나 RoomPlan 상자가 바뀌면 다시 점검)
+        if kind == .room, let depthData,
+           var view = shotView ?? FrameProbe.depthGrid(depth: depthData.depthMap, confidence: depthData.confidenceMap).map(makeView) {
+            view.frameId = id
+            shots.addSaved(view)
+        }
 
         // ARFrame 자체는 잡아두지 않고 필요한 버퍼만 넘긴다
         let image = frame.capturedImage
@@ -275,14 +329,23 @@ final class CaptureRecorder {
         }
     }
 
-    private func publish(tracking: TrackingState, hasDepth: Bool) {
+    private func publish(tracking: TrackingState, hasDepth: Bool, time: Double, camera: simd_float4x4) {
         let cfg = AppConfig.shared
         let floor = kind == .room ? coach.floorCoverage : nil
+        // 가구 안내는 첫 바퀴(12방향 + 이동 범위)를 마쳤거나 1분이 지난 뒤부터 (그 전에는 위 목록만 보여 준다)
+        var tip: FurnitureTip?
+        if kind == .room, tracking == .normal, shots.hasFurniture {
+            let loopDone = sampler.coverage >= 0.999 && coach.spanM >= Double(coach.config.loopSpanM)
+            let late = firstFrameTime.map { time - $0 >= shots.config.guideAfterS } ?? false
+            if loopDone || late { tip = shots.tip(now: time, camera: camera) }
+        }
         let s = CaptureStats(kept: sampler.kept, spanM: spanM, coverage: sampler.coverage,
                              tracking: tracking, hasDepth: hasDepth, alert: coach.alert, floorCoverage: floor,
+                             furniture: kind == .room ? shots.chips() : [], furnitureTip: tip,
                              hint: sampler.hint(kind: kind, tracking: tracking, spanM: spanM,
                                                 minSpanM: cfg.roomMinSpanM, goodFrames: cfg.roomGoodFrames,
-                                                floorCoverage: floor, floorTarget: coach.config.floorHintBelow))
+                                                floorCoverage: floor, floorTarget: coach.config.floorHintBelow,
+                                                furnitureMissing: furnitureMissing.count))
         onStats?(s)
     }
 
@@ -365,6 +428,43 @@ enum FrameProbe {
             }
         }
         return (out, confident, cols * rows)
+    }
+
+    /// 깊이 지도를 cols × rows 격자(칸 가운데 값)로 뽑는다 — 가구 전체 사진 점검용 (FurnitureShotMath).
+    /// 신뢰도 low · 측정 없음 · 0.2 m 미만 · 5 m 초과는 0. 64 × 48 = 3072점만 읽는다
+    static func depthGrid(depth: CVPixelBuffer, confidence: CVPixelBuffer?, cols: Int = 64, rows: Int = 48) -> DepthGrid? {
+        guard CVPixelBufferGetPixelFormatType(depth) == kCVPixelFormatType_DepthFloat32 else { return nil }
+        CVPixelBufferLockBaseAddress(depth, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(depth) else { return nil }
+        let w = CVPixelBufferGetWidth(depth), h = CVPixelBufferGetHeight(depth), row = CVPixelBufferGetBytesPerRow(depth)
+        guard w >= cols, h >= rows else { return nil }
+
+        var confBase: UnsafeMutableRawPointer?
+        var confRow = 0
+        var confLocked = false
+        if let confidence, CVPixelBufferGetPixelFormatType(confidence) == kCVPixelFormatType_OneComponent8,
+           CVPixelBufferGetWidth(confidence) == w, CVPixelBufferGetHeight(confidence) == h {
+            CVPixelBufferLockBaseAddress(confidence, .readOnly)
+            confLocked = true
+            confBase = CVPixelBufferGetBaseAddress(confidence)
+            confRow = CVPixelBufferGetBytesPerRow(confidence)
+        }
+        defer { if confLocked, let confidence { CVPixelBufferUnlockBaseAddress(confidence, .readOnly) } }
+
+        var meters = [Float](repeating: 0, count: cols * rows)
+        for r in 0..<rows {
+            let v = min(h - 1, (2 * r + 1) * h / (2 * rows))
+            let line = base.advanced(by: v * row).assumingMemoryBound(to: Float32.self)
+            for c in 0..<cols {
+                let u = min(w - 1, (2 * c + 1) * w / (2 * cols))
+                let d = line[u]
+                guard d.isFinite, d > 0.2, d < 5 else { continue }
+                if let confBase, confBase.load(fromByteOffset: v * confRow + u, as: UInt8.self) < 1 { continue }
+                meters[r * cols + c] = d
+            }
+        }
+        return DepthGrid(cols: cols, rows: rows, meters: meters)
     }
 
     /// 화면이 얼마나 "무늬가 있는지" (0~255). 밝기(Y) 평면의 64×48 격자 점마다 오른쪽 · 아래로 폭의 1/80 만큼 떨어진 점과의

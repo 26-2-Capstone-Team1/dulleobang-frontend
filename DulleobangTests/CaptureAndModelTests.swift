@@ -329,3 +329,323 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertNil(AssetURL.resolve(nil))
     }
 }
+
+/// 가구 전체 사진 점검 (FurnitureShotMath · FurnitureShotTracker).
+/// 상자들 + 바닥(y = 0)을 카메라에서 광선으로 비춰 LiDAR 깊이 격자(64 × 48, 5 m 넘으면 0)를 흉내 낸다. 크기는 실제 촬영본 capture 4 기준
+final class FurnitureShotTests: XCTestCase {
+    private let W = 1920, H = 1440
+    private let fx: Float = 1450, fy: Float = 1450, cx: Float = 960, cy: Float = 720
+
+    private func box(_ id: String, _ category: String, at c: SIMD3<Float>, size: SIMD3<Float>,
+                     yawDeg: Float = 0) -> FurnitureBox {
+        var m = simd_float4x4(simd_quatf(angle: yawDeg * .pi / 180, axis: SIMD3(0, 1, 0)))
+        m.columns.3 = SIMD4<Float>(c.x, c.y, c.z, 1)
+        return FurnitureBox(id: id, category: category, transform: m, dimensions: size)
+    }
+
+    /// eye 에서 target 을 보는 카메라 (ARKit 카메라 축: x 오른쪽, y 위, -z 정면)
+    private func camera(_ eye: SIMD3<Float>, _ target: SIMD3<Float>) -> simd_float4x4 {
+        let z = -simd_normalize(target - eye)
+        let x = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), z)), y = simd_cross(z, x)
+        return simd_float4x4(columns: (SIMD4(x.x, x.y, x.z, 0), SIMD4(y.x, y.y, y.z, 0),
+                                       SIMD4(z.x, z.y, z.z, 0), SIMD4(eye.x, eye.y, eye.z, 1)))
+    }
+
+    private func hit(_ b: FurnitureBox, _ o: SIMD3<Float>, _ d: SIMD3<Float>) -> Float? {
+        let ol = b.local(o), a = b.axes, h = b.half
+        let dl = SIMD3(simd_dot(d, a.x), simd_dot(d, a.y), simd_dot(d, a.z))
+        var tmin = -Float.infinity, tmax = Float.infinity
+        for i in 0..<3 {
+            if abs(dl[i]) < 1e-9 {
+                if abs(ol[i]) > h[i] { return nil }
+                continue
+            }
+            let t1 = (-h[i] - ol[i]) / dl[i], t2 = (h[i] - ol[i]) / dl[i]
+            tmin = max(tmin, min(t1, t2))
+            tmax = min(tmax, max(t1, t2))
+        }
+        guard tmax >= max(tmin, 0) else { return nil }
+        return tmin > 0 ? tmin : tmax
+    }
+
+    private func render(_ solids: [FurnitureBox], from T: simd_float4x4) -> DepthGrid {
+        let cols = 64, rows = 48
+        var meters = [Float](repeating: 0, count: cols * rows)
+        let R = simd_float3x3(T.columns.0.xyz, T.columns.1.xyz, T.columns.2.xyz), o = T.columns.3.xyz
+        for r in 0..<rows {
+            for c in 0..<cols {
+                let u = (Float(c) + 0.5) / Float(cols) * Float(W), v = (Float(r) + 0.5) / Float(rows) * Float(H)
+                let d = R * SIMD3((u - cx) / fx, -(v - cy) / fy, -1)       // 카메라 z 거리 1 만큼 가는 광선
+                var best = Float.infinity
+                if d.y < -1e-6 { best = -o.y / d.y }                       // 바닥 y = 0
+                for b in solids { if let t = hit(b, o, d) { best = min(best, t) } }
+                if best.isFinite, best > 0.2, best < 5 { meters[r * cols + c] = best }
+            }
+        }
+        return DepthGrid(cols: cols, rows: rows, meters: meters)
+    }
+
+    private func view(_ solids: [FurnitureBox], eye: SIMD3<Float>, look: SIMD3<Float>, frameId: Int? = nil,
+                      time: Double = 0, blur: Double = 0) -> ShotView {
+        let T = camera(eye, look)
+        return ShotView(frameId: frameId, time: time, transform: T, fx: fx, fy: fy, cx: cx, cy: cy,
+                        width: W, height: H, depth: render(solids, from: T), blurPx: blur)
+    }
+
+    private func check(_ b: FurnitureBox, eye: SIMD3<Float>, look: SIMD3<Float>? = nil, scene: [FurnitureBox],
+                       furniture: [FurnitureBox]? = nil, blur: Double = 0) -> ShotCheck {
+        FurnitureShotMath.check(b, in: view(scene, eye: eye, look: look ?? b.center, blur: blur), others: furniture ?? scene)
+    }
+
+    private var chair: FurnitureBox { box("chair", "chair", at: SIMD3(0, 0.4, -2), size: SIMD3(0.5, 0.8, 0.5)) }
+
+    /// capture 4 식탁(2.27 × 0.73 × 0.99) + 의자 6개(0.56 × 0.79 × 0.63, 식탁 밑으로 25 cm 넣음)
+    private var diningSet: (table: FurnitureBox, chairs: [FurnitureBox]) {
+        let table = box("table", "table", at: SIMD3(0, 0.365, -2.6), size: SIMD3(2.27, 0.73, 0.99))
+        var chairs: [FurnitureBox] = []
+        for (i, x) in [Float(-0.7), 0, 0.7].enumerated() {
+            chairs.append(box("near\(i)", "chair", at: SIMD3(x, 0.395, -2.04), size: SIMD3(0.56, 0.79, 0.63)))
+            chairs.append(box("far\(i)", "chair", at: SIMD3(x, 0.395, -3.16), size: SIMD3(0.56, 0.79, 0.63), yawDeg: 180))
+        }
+        return (table, chairs)
+    }
+
+    func testWholeChairPassesAndThreeQuarterViewScoresHigher() {
+        let front = check(chair, eye: SIMD3(0, 1.4, 0), scene: [chair])
+        let quarter = check(chair, eye: SIMD3(1.3, 1.4, -0.7), scene: [chair])
+        XCTAssertNil(front.problem)
+        XCTAssertNil(quarter.problem)
+        XCTAssertEqual(quarter.visible ?? 0, 1, accuracy: 1e-9)
+        XCTAssertGreaterThan(quarter.score, front.score, "두 옆면 + 윗면이 보이는 3/4 각도가 더 좋은 대표 사진")
+        XCTAssertEqual(quarter.bbox.map { $0.z > $0.x && $0.w > $0.y }, true)
+    }
+
+    func testTooCloseTooFarAndBehind() {
+        XCTAssertEqual(check(chair, eye: SIMD3(0.6, 1.0, -2.0), scene: [chair]).problem, .notWhole, "옆에서 바짝 붙음")
+        let far = box("far", "chair", at: SIMD3(0, 0.4, -6), size: SIMD3(0.5, 0.8, 0.5))
+        let farCheck = check(far, eye: SIMD3(0, 1.4, 0), scene: [far])
+        XCTAssertEqual(farCheck.problem, .tooFar)
+        XCTAssertNil(farCheck.visible, "5 m 넘으면 LiDAR 깊이가 없다")
+        XCTAssertEqual(check(chair, eye: SIMD3(0, 1.4, 0), look: SIMD3(0, 1, 2), scene: [chair]).problem, .notInView)
+    }
+
+    func testPersonInFrontBlocks() {
+        let person = box("person", "person", at: SIMD3(0, 0.85, -1.2), size: SIMD3(0.45, 1.7, 0.3))
+        let c = check(chair, eye: SIMD3(0, 1.4, 0), scene: [chair, person], furniture: [chair])
+        XCTAssertEqual(c.problem, .blocked)
+        XCTAssertNil(c.blockerId, "가구가 아닌 것이 가림")
+    }
+
+    func testDiningTableWithTuckedChairsAndCupsPasses() {
+        let (table, chairs) = diningSet
+        let cups = [box("cup1", "cup", at: SIMD3(0.3, 0.78, -2.5), size: SIMD3(0.08, 0.1, 0.08)),
+                    box("cup2", "cup", at: SIMD3(-0.5, 0.8, -2.8), size: SIMD3(0.1, 0.14, 0.1)),
+                    box("vase", "cup", at: SIMD3(0, 0.88, -2.6), size: SIMD3(0.15, 0.3, 0.15))]
+        let c = check(table, eye: SIMD3(2.6, 1.5, -0.4), look: SIMD3(0, 0.4, -2.6),
+                      scene: [table] + chairs + cups, furniture: [table] + chairs)
+        XCTAssertNil(c.problem, "식탁에 넣은 의자 · 위에 놓인 컵은 가린 것으로 치지 않는다")
+        XCTAssertGreaterThan(c.visible ?? 0, 0.9)
+    }
+
+    func testTuckedChairIsBlockedFromTheTableSideButPassesFromItsFreeSide() {
+        let table = diningSet.table
+        let tucked = box("tucked", "chair", at: SIMD3(0, 0.395, -3.16), size: SIMD3(0.56, 0.79, 0.63), yawDeg: 180)
+        let overTable = check(tucked, eye: SIMD3(0, 1.5, -0.6), scene: [table, tucked])
+        XCTAssertEqual(overTable.problem, .blocked)
+        XCTAssertEqual(overTable.blockerId, "table")
+        XCTAssertNil(check(tucked, eye: SIMD3(0, 1.4, -4.9), scene: [table, tucked]).problem)
+        XCTAssertEqual(FurnitureShotMath.tucked(tucked, others: [table, tucked], minShare: 0.15), "table")
+        XCTAssertNil(FurnitureShotMath.tucked(table, others: [table, tucked], minShare: 0.15))
+    }
+
+    func testSofaBehindCoffeeTableNeedsAnAngle() {
+        let sofa = box("sofa", "sofa", at: SIMD3(0, 0.425, -3.6), size: SIMD3(2.0, 0.85, 0.9))
+        let coffee = box("coffee", "table", at: SIMD3(0, 0.225, -2.7), size: SIMD3(1.0, 0.45, 0.6))
+        let front = check(sofa, eye: SIMD3(0, 1.4, -0.6), look: SIMD3(0, 0.4, -3.6), scene: [sofa, coffee])
+        XCTAssertEqual(front.problem, .blocked)
+        XCTAssertEqual(front.blockerId, "coffee")
+        XCTAssertNil(check(sofa, eye: SIMD3(3.0, 1.5, -2.6), look: SIMD3(0, 0.4, -3.6), scene: [sofa, coffee]).problem)
+    }
+
+    func testTVOnCabinetDoesNotBlockTheCabinet() {
+        let cabinet = box("cab", "storage", at: SIMD3(0, 0.25, -3), size: SIMD3(1.6, 0.5, 0.45))
+        let tv = box("tv", "television", at: SIMD3(0, 0.77, -3), size: SIMD3(0.92, 0.54, 0.1))
+        XCTAssertNil(check(cabinet, eye: SIMD3(0.3, 1.4, -0.9), look: SIMD3(0, 0.3, -3), scene: [cabinet, tv]).problem)
+    }
+
+    func testBlurryFrameAndUnknownDepth() {
+        XCTAssertEqual(check(chair, eye: SIMD3(1.3, 1.4, -0.7), scene: [chair], blur: 8).problem, .blurry)
+        var v = view([chair], eye: SIMD3(1.3, 1.4, -0.7), look: chair.center)
+        v.depth = DepthGrid(cols: 64, rows: 48, meters: [Float](repeating: 0, count: 64 * 48))
+        let c = FurnitureShotMath.check(chair, in: v, others: [chair])
+        XCTAssertNil(c.problem, "깊이를 못 재면 가려짐은 모름 → 화면 안 · 크기로만 판단")
+        XCTAssertNil(c.visible)
+    }
+
+    func testTrackerNeedsASavedFrameAndSharesWithSameShapeFurniture() {
+        let c1 = chair
+        let c2 = box("c2", "chair", at: SIMD3(3, 0.4, -2), size: SIMD3(0.52, 0.8, 0.49), yawDeg: 90)   // 같은 모양 (±6 cm)
+        let sofa = box("s", "sofa", at: SIMD3(0, 0.425, 3), size: SIMD3(2, 0.85, 0.9))                 // 카메라 뒤
+        var t = FurnitureShotTracker()
+        t.updateBoxes([c1, c2, sofa])
+        XCTAssertEqual(t.state(of: "chair"), .pending)
+        let live = view([c1, c2, sofa], eye: SIMD3(1.3, 1.4, -0.7), look: c1.center, time: 1)
+        XCTAssertTrue(t.evaluateLive(live), "아직 전체 사진이 없는 의자가 지금 통과 → 이 프레임을 꼭 저장")
+        XCTAssertEqual(t.state(of: "chair"), .pending, "라이브로 통과만 해서는 ✓ 아님")
+        var saved = live
+        saved.frameId = 0
+        t.addSaved(saved)
+        XCTAssertEqual(t.state(of: "chair"), .done)
+        XCTAssertEqual(t.state(of: "c2"), .shared)
+        XCTAssertEqual(t.state(of: "s"), .pending)
+        XCTAssertEqual(t.missingLabels, ["소파"])
+        XCTAssertEqual(t.chips().map(\.label), ["의자 1", "의자 2", "소파"])
+        XCTAssertFalse(t.evaluateLive(live), "이미 ✓ 인 가구만 통과 → 억지로 저장하지 않음")
+    }
+
+    func testBoxCorrectedByRoomPlanIsRecheckedWithSavedFrames() {
+        var t = FurnitureShotTracker()
+        t.updateBoxes([chair])
+        t.addSaved(view([chair], eye: SIMD3(1.3, 1.4, -0.7), look: chair.center, frameId: 0))
+        XCTAssertEqual(t.state(of: "chair"), .done)
+        let moved = box("chair", "chair", at: SIMD3(0, 0.4, 2), size: SIMD3(0.5, 0.8, 0.5))   // RoomPlan 이 자리를 고침 → 그 사진엔 없음
+        t.updateBoxes([moved])
+        XCTAssertEqual(t.state(of: "chair"), .pending)
+        let late = box("late", "chair", at: SIMD3(0, 0.4, -2), size: SIMD3(0.5, 0.8, 0.5))     // 나중에 발견된 가구 → 저장한 프레임으로 바로 ✓
+        t.updateBoxes([moved, late])
+        XCTAssertEqual(t.state(of: "late"), .done)
+        XCTAssertEqual(t.state(of: "chair"), .shared)
+    }
+
+    func testTipPointsTowardMissingFurniture() {
+        var t = FurnitureShotTracker()
+        t.updateBoxes([box("s", "sofa", at: SIMD3(3, 0.425, 0), size: SIMD3(2, 0.85, 0.9), yawDeg: 90)])
+        let tip = t.tip(now: 0, camera: camera(SIMD3(0, 1.4, 0), SIMD3(0, 1, -3)))       // 정면(-z)을 봄 → 소파는 오른쪽
+        XCTAssertEqual(tip?.problem, .notInView)
+        XCTAssertEqual(tip?.turn, .right)
+        XCTAssertEqual(tip?.title, "소파 전체 사진이 아직 없어요")
+        XCTAssertEqual(t.tip(now: 1, camera: camera(SIMD3(0, 1.4, 0), SIMD3(-3, 1, 0)))?.turn, .behind)
+        XCTAssertEqual(t.tip(now: 2, camera: camera(SIMD3(0, 1.4, 0), SIMD3(0, 1, 3)))?.turn, .left)
+    }
+
+    func testReportUsesFinalBoxesAndPicksShotsFromDifferentDirections() throws {
+        var t = FurnitureShotTracker()
+        t.updateBoxes([chair])
+        let eyes: [SIMD3<Float>] = [SIMD3(1.3, 1.4, -0.7), SIMD3(-1.3, 1.4, -0.7), SIMD3(1.35, 1.4, -0.75), SIMD3(0, 1.4, -4)]
+        for (i, e) in eyes.enumerated() { t.addSaved(view([chair], eye: e, look: chair.center, frameId: i)) }
+        // RoomPlan 최종 결과는 id 가 바뀌고 상자도 조금 움직일 수 있다
+        let final = box("final-id", "chair", at: SIMD3(0.01, 0.4, -2.01), size: SIMD3(0.5, 0.8, 0.5))
+        let file = t.report(finalBoxes: [final])
+        XCTAssertEqual(file.frameCount, 4)
+        XCTAssertEqual(file.objects.count, 1)
+        let e = try XCTUnwrap(file.objects.first)
+        XCTAssertEqual(e.objectId, "final-id")
+        XCTAssertEqual(e.status, "full")
+        XCTAssertEqual(e.shots.count, 3)
+        XCTAssertFalse(Set(e.shots.map(\.frameId)).isSuperset(of: [0, 2]), "거의 같은 방향(0번 · 2번)은 하나만")
+        XCTAssertEqual(e.shots.first?.bbox?.count, 4)
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(file)) as? [String: Any]
+        XCTAssertEqual((json?["objects"] as? [[String: Any]])?.first?["status"] as? String, "full")
+    }
+
+    func testForceKeepSkipsTheMotionRuleButNotTheInterval() {
+        var p = matrix_identity_float4x4
+        p.columns.3 = SIMD4(0, 1.4, 0, 1)
+        var s = FrameSampler(minTranslation: 0.15, minRotationDeg: 10, minInterval: 0.3)
+        XCTAssertTrue(s.shouldKeep(p, time: 0, tracking: .normal))
+        XCTAssertFalse(s.shouldKeep(p, time: 1, tracking: .normal), "움직이지 않음")
+        XCTAssertTrue(s.shouldKeep(p, time: 1, tracking: .normal, force: true), "가구 전체 사진 → 저장")
+        XCTAssertFalse(s.shouldKeep(p, time: 1.1, tracking: .normal, force: true), "간격 0.3초는 지킨다")
+        XCTAssertFalse(s.shouldKeep(p, time: 2, tracking: .limited, force: true), "추적이 불안정하면 저장하지 않는다")
+    }
+
+    func testHintAsksForFurnitureAfterTheFloor() {
+        var s = FrameSampler(minTranslation: 0.15, minRotationDeg: 10, minInterval: 0)
+        for i in 0..<36 {
+            var m = simd_float4x4(simd_quatf(angle: Float(i * 10) * .pi / 180, axis: SIMD3(0, 1, 0)))
+            m.columns.3 = SIMD4(0, 1.4, 0, 1)
+            _ = s.shouldKeep(m, time: Double(i), tracking: .normal)
+        }
+        XCTAssertTrue(s.hint(kind: .room, tracking: .normal, spanM: 2.4, minSpanM: 2, goodFrames: 10,
+                             furnitureMissing: 2).contains("가구 2개"))
+        XCTAssertTrue(s.hint(kind: .room, tracking: .normal, spanM: 2.4, minSpanM: 2, goodFrames: 10,
+                             floorCoverage: 0.5, furnitureMissing: 2).contains("바닥"), "바닥 안내가 먼저")
+    }
+
+    func testJosa() {
+        XCTAssertEqual(Josa.iGa("소파"), "소파가")
+        XCTAssertEqual(Josa.iGa("테이블"), "테이블이")
+        XCTAssertEqual(Josa.iGa("의자 1"), "의자 1이")
+        XCTAssertEqual(Josa.iGa("의자 2"), "의자 2가")
+        XCTAssertEqual(Josa.iGa("TV"), "TV가")
+        XCTAssertEqual(Josa.eulReul("소파"), "소파를")
+        XCTAssertEqual(Josa.eulReul("테이블"), "테이블을")
+    }
+
+    // MARK: 방이 좁을 때 (폰 돌리기 · 촬영 뒤 0.5× 광각)
+
+    /// 세로로 든 폰: 센서 긴 축(x)이 아래, 짧은 축(y)이 화면 오른쪽
+    private func portraitCamera(_ eye: SIMD3<Float>, _ target: SIMD3<Float>) -> simd_float4x4 {
+        let f = simd_normalize(target - eye), z = -f
+        let y = simd_normalize(simd_cross(f, SIMD3<Float>(0, 1, 0))), x = simd_cross(y, z)
+        return simd_float4x4(columns: (SIMD4(x.x, x.y, x.z, 0), SIMD4(y.x, y.y, y.z, 0),
+                                       SIMD4(z.x, z.y, z.z, 0), SIMD4(eye.x, eye.y, eye.z, 1)))
+    }
+
+    private func liveView(_ solids: [FurnitureBox], camera T: simd_float4x4, time: Double, frameId: Int? = nil) -> ShotView {
+        ShotView(frameId: frameId, time: time, transform: T, fx: fx, fy: fy, cx: cx, cy: cy, width: W, height: H,
+                 depth: render(solids, from: T), blurPx: 0)
+    }
+
+    func testWideSofaInPortraitSuggestsTurningThePhone() {
+        let sofa = box("sofa", "sofa", at: SIMD3(0, 0.425, -2.6), size: SIMD3(2.4, 0.85, 0.9))
+        let eye = SIMD3<Float>(0, 1.2, 0)
+        var t = FurnitureShotTracker()
+        t.updateBoxes([sofa])
+        let portrait = portraitCamera(eye, sofa.center)
+        t.evaluateLive(liveView([sofa], camera: portrait, time: 0))
+        let tip = t.tip(now: 0, camera: portrait)
+        XCTAssertEqual(tip?.problem, .notWhole)
+        XCTAssertEqual(tip?.suggestion, .rotateToLandscape, "좌우로만 넘침 → 가로로 들면 좌우가 긴 축(약 65°)")
+        XCTAssertTrue(t.evaluateLive(liveView([sofa], camera: camera(eye, sofa.center), time: 1)),
+                      "같은 자리에서 가로로 들면 통과 → 이 프레임을 저장")
+    }
+
+    func testTallWardrobeSuggestsWideShotAfterWaiting() {
+        let wardrobe = box("w", "storage", at: SIMD3(0, 1.1, -1.6), size: SIMD3(1.0, 2.2, 0.6))
+        let cam = portraitCamera(SIMD3(0, 1.3, 0), wardrobe.center)
+        var config = FurnitureShotConfig()
+        config.wideCameraAvailable = true
+        var t = FurnitureShotTracker(config: config)
+        t.updateBoxes([wardrobe])
+        XCTAssertFalse(t.needsWideShot)
+        t.evaluateLive(liveView([wardrobe], camera: cam, time: 0))
+        let first = t.tip(now: 0, camera: cam)
+        XCTAssertEqual(first?.problem, .notWhole)
+        XCTAssertNil(first?.suggestion, "위아래로 넘치는데 이미 세로로 들고 있음 → 돌려도 안 된다")
+        t.evaluateLive(liveView([wardrobe], camera: cam, time: 9))
+        XCTAssertEqual(t.tip(now: 9, camera: cam)?.suggestion, .wideAfterScan, "8초 넘게 못 찍으면 촬영 뒤 0.5× 광각 안내")
+        t.addSaved(liveView([wardrobe], camera: cam, time: 10, frameId: 0))
+        XCTAssertTrue(t.needsWideShot, "저장한 프레임에서도 다 안 들어옴 → 끝낼 때 광각 사진 제안")
+    }
+
+    func testWideShotPlanGroupsSameShapeAndPutsNotWholeFirst() {
+        let rule = FurnitureShotsFile.Rule(minVisible: 0.85, minFaceVisible: 0.6, minFill: 0.3, maxBlurPx: 6,
+                                           marginFrac: 0.02, twinTolM: 0.06)
+        let report = FurnitureShotsFile(rule: rule, frameCount: 10, objects: [
+            .init(objectId: "c1", category: "chair", label: "의자 1", status: "missing", problem: "blocked"),
+            .init(objectId: "sofa", category: "sofa", label: "소파", status: "missing", problem: "notWhole"),
+            .init(objectId: "c2", category: "chair", label: "의자 2", status: "missing", problem: "blocked"),
+            .init(objectId: "tv", category: "television", label: "TV", status: "missing", problem: "tooFar"),
+            .init(objectId: "bed", category: "bed", label: "침대", status: "full"),
+        ])
+        let boxes = [box("c1", "chair", at: SIMD3(0, 0.4, 0), size: SIMD3(0.5, 0.8, 0.5)),
+                     box("c2", "chair", at: SIMD3(1, 0.4, 0), size: SIMD3(0.52, 0.8, 0.5)),
+                     box("sofa", "sofa", at: SIMD3(3, 0.425, 0), size: SIMD3(2, 0.85, 0.9)),
+                     box("tv", "television", at: SIMD3(0, 1, 3), size: SIMD3(1, 0.6, 0.1)),
+                     box("bed", "bed", at: SIMD3(-3, 0.3, 0), size: SIMD3(1.5, 0.6, 2))]
+        let plan = WideShotTarget.plan(report: report, boxes: boxes, tol: 0.06)
+        XCTAssertEqual(plan.map(\.objectId), ["sofa", "c1"], "다 안 들어옴 먼저 · 작음(tooFar) · 이미 있음은 빼고")
+        XCTAssertEqual(plan.last?.alsoFor, ["c2"], "같은 모양 의자는 한 장으로")
+    }
+}

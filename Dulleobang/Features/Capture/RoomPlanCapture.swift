@@ -6,10 +6,12 @@ import SwiftUI
 /// LiDAR 기기 전용: RoomPlan 을 "우리 ARSession" 위에서 돌린다 (iOS 17 custom ARSession).
 /// → RoomPlan 결과(벽·문·창·가구 + 치수)와 CaptureRecorder 의 프레임/포즈가 같은 월드 좌표계를 공유한다.
 ///   AI 팀원은 roomplan_structure.json 을 구조 추출의 정답(ground truth)이나 대체값으로 쓸 수 있다.
-final class RoomPlanController: NSObject, ObservableObject, RoomCaptureViewDelegate {
+final class RoomPlanController: NSObject, ObservableObject, RoomCaptureViewDelegate, RoomCaptureSessionDelegate {
     @Published private(set) var result: CapturedRoom?
     @Published private(set) var errorMessage: String?
     weak var view: RoomCaptureView?
+    /// 스캔 중 RoomPlan 이 가구 상자를 고칠 때마다 (메인 스레드) → 가구 전체 사진 점검 (CaptureRecorder.updateFurniture)
+    var onFurniture: (([FurnitureBox]) -> Void)?
 
     static var isSupported: Bool { RoomCaptureSession.isSupported }
 
@@ -48,6 +50,12 @@ final class RoomPlanController: NSObject, ObservableObject, RoomCaptureViewDeleg
         if let error { errorMessage = error.localizedDescription }
         result = processedResult
     }
+
+    // RoomCaptureSessionDelegate — RoomCaptureView 의 화면 안내는 그대로 두고 스캔 중 결과만 받는다 (Apple 예제와 같은 방식)
+    func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        let boxes = RoomPlanExport.furniture(from: room)
+        DispatchQueue.main.async { [weak self] in self?.onFurniture?(boxes) }
+    }
 }
 
 struct RoomPlanCaptureView: UIViewRepresentable {
@@ -57,6 +65,7 @@ struct RoomPlanCaptureView: UIViewRepresentable {
     func makeUIView(context: Context) -> RoomCaptureView {
         let v = RoomCaptureView(frame: .zero, arSession: session)
         v.delegate = controller
+        v.captureSession.delegate = controller          // 스캔 중 가구 상자 갱신 (가구 전체 사진 점검)
         controller.view = v
         return v
     }
@@ -78,6 +87,14 @@ enum RoomPlanExport {
             try? FileManager.default.removeItem(at: usdz)
         }
         return files
+    }
+
+    /// 가구 상자 (가구 전체 사진 점검용). 스캔 중 결과 · 최종 결과 모두 같은 변환
+    static func furniture(from room: CapturedRoom) -> [FurnitureBox] {
+        room.objects.map { o in
+            FurnitureBox(id: o.identifier.uuidString, category: String(describing: o.category),
+                         transform: o.transform, dimensions: o.dimensions)
+        }
     }
 
     /// GET /listings/{id}/space 의 roomGeometry + objects 와 같은 스키마로 변환
