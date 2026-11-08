@@ -2,7 +2,7 @@ import PhotosUI
 import SwiftUI
 
 /// 마이페이지 (데모 4번째 화면 · 중개사 인증 후 화면):
-/// 이름 · 내 정보 · 🔔 · ⚙︎ / [중개사 메뉴] / 관심 매물 · 내 가구 · 가구로 매물 비교 / 문의하기 · 중개사 신청하기 · 앱 버전 · 로그아웃
+/// 프로필(이름 · 역할) · 알림 · 설정 / 바로가기 3칸(관심 매물 · 내 가구 · 올린 매물) · 내 가구로 맞는 방 찾기 / [중개사 메뉴] / 문의하기 · 중개사 신청하기 · 앱 버전 · 로그아웃
 struct MyPageView: View {
     var body: some View { TabStack { MyPageContent() } }
 }
@@ -11,19 +11,22 @@ private struct MyPageContent: View {
     @EnvironmentObject private var session: Session
     @Environment(\.navigate) private var navigate
     @State private var myCount: Int?
+    @State private var furnitureCount: Int?
     @State private var confirmLogout = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
+                shortcutTiles
+                CompareBanner(title: "내 가구로 맞는 방 찾기", subtitle: "관심 매물에 내 침대 · 책상을 자동으로 놓아 비교해요")
 
                 if let agent = session.agent {
                     if agent.isApproved {
                         brokerCard(agent)
                     } else if agent.isPending {
                         statusCard(title: "중개사 인증 심사 중", message: "제출한 서류를 확인하고 있습니다. 승인되면 올린 매물에 ‘인증 중개사’ 표시가 붙어요.",
-                                   color: DB.purple)
+                                   color: DB.accent)
                     } else if agent.isRejected {
                         statusCard(title: "중개사 인증이 반려되었습니다",
                                    message: agent.rejectReason ?? "정보를 확인한 뒤 다시 신청해 주세요.", color: DB.danger)
@@ -34,22 +37,9 @@ private struct MyPageContent: View {
                     // 중개사가 아니어도 본인 집을 매물로 올릴 수 있다
                     GroupCard {
                         Button { navigate(.register) } label: { NavRowLabel(title: "내 집 매물 올리기") }
-                        RowDivider()
-                        NavigationLink(value: AppRoute.myListings) {
-                            NavRowLabel(title: "내가 올린 매물", value: myCount.map { "\($0)개" }, valueColor: DB.purple)
-                        }
                     }
                     .buttonStyle(.plain)
                 }
-
-                GroupCard {
-                    NavigationLink(value: AppRoute.favorites) { NavRowLabel(title: "관심 매물") }
-                    RowDivider()
-                    NavigationLink(value: AppRoute.furniture) { NavRowLabel(title: "내 가구") }
-                    RowDivider()
-                    NavigationLink(value: AppRoute.compare([])) { NavRowLabel(title: "가구로 매물 비교") }
-                }
-                .buttonStyle(.plain)
 
                 GroupCard {
                     if let url = mailURL {
@@ -84,10 +74,17 @@ private struct MyPageContent: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .center, spacing: 14) {
+            Text(String(session.displayName.prefix(1)))
+                .font(.title3.weight(.heavy))
+                .foregroundStyle(DB.accent)
+                .frame(width: 52, height: 52)
+                .background(DB.accentSoft, in: Circle())
+                .overlay(Circle().stroke(DB.accentLine))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(session.displayName).font(.title2.weight(.bold)).foregroundStyle(DB.ink)
-                Text("내 정보").font(.footnote).foregroundStyle(DB.sub)
+                roleChip
             }
             Spacer()
             NavigationLink(value: AppRoute.notifications) {
@@ -105,11 +102,46 @@ private struct MyPageContent: View {
         .padding(.bottom, 6)
     }
 
-    /// 보라 "중개사 메뉴" 카드
+    /// 이름 아래: 인증 중개사 / 심사 중 / 일반 회원
+    @ViewBuilder private var roleChip: some View {
+        if session.isBroker {
+            VerifiedBrokerBadge()
+        } else {
+            Text(session.agent?.isPending == true ? "중개사 인증 심사 중" : "일반 회원")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(DB.sub)
+        }
+    }
+
+    /// 바로가기 3칸: 관심 매물 · 내 가구 · 올린 매물 (누르면 그 목록)
+    private var shortcutTiles: some View {
+        HStack(spacing: 10) {
+            tile(icon: "heart.fill", color: DB.danger, title: "관심 매물", value: session.favoriteIds.count, route: .favorites)
+            tile(icon: "sofa", color: DB.accent, title: "내 가구", value: furnitureCount, route: .furniture)
+            tile(icon: "house.fill", color: DB.ink, title: "올린 매물", value: myCount, route: .myListings)
+        }
+    }
+
+    private func tile(icon: String, color: Color, title: String, value: Int?, route: AppRoute) -> some View {
+        NavigationLink(value: route) {
+            VStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 18, weight: .semibold)).foregroundStyle(color)
+                Text(value.map { "\($0)" } ?? "–").font(.title3.weight(.heavy)).foregroundStyle(DB.ink)
+                Text(title).font(.caption.weight(.semibold)).foregroundStyle(DB.sub)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(DB.group, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// 초록 "중개사 메뉴" 카드
     private func brokerCard(_ a: AgentProfile) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("중개사 메뉴").font(.headline.weight(.bold)).foregroundStyle(DB.purple)
+                Text("중개사 메뉴").font(.headline.weight(.bold)).foregroundStyle(DB.accent)
                 Spacer()
                 Button("매물 등록") { navigate(.register) }.buttonStyle(.dbPill(filled: true))
             }
@@ -118,15 +150,15 @@ private struct MyPageContent: View {
                 NavigationLink(value: AppRoute.agentInfo) { NavRowLabel(title: "중개사 인증 정보 보기") }
                 Divider().padding(.horizontal, 16)
                 NavigationLink(value: AppRoute.myListings) {
-                    NavRowLabel(title: "내가 올린 매물 보기", value: myCount.map { "\($0)개" }, valueColor: DB.purple)
+                    NavRowLabel(title: "내가 올린 매물 보기", value: myCount.map { "\($0)개" }, valueColor: DB.accent)
                 }
             }
             .buttonStyle(.plain)
             .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
         }
         .padding(16)
-        .background(DB.purpleSoft, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(DB.purpleLine))
+        .background(DB.accentSoft, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(DB.accentLine))
     }
 
     private func statusCard(title: String, message: String, color: Color) -> some View {
@@ -141,7 +173,7 @@ private struct MyPageContent: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DB.purpleSoft, in: RoundedRectangle(cornerRadius: 16))
+            .background(DB.accentSoft, in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
     }
@@ -157,6 +189,7 @@ private struct MyPageContent: View {
     private func reload() async {
         await session.refreshAgent()
         myCount = (try? await MyListingsView.fetch(userId: session.userId))?.count
+        furnitureCount = (try? await FurnitureAPI.mine())?.count
     }
 }
 
@@ -308,7 +341,7 @@ struct AgentInfoView: View {
                         }
                     }
                     .padding(16)
-                    .background(DB.purpleSoft, in: RoundedRectangle(cornerRadius: 16))
+                    .background(DB.accentSoft, in: RoundedRectangle(cornerRadius: 16))
                 } else {
                     EmptyStateView(icon: "person.text.rectangle", title: "인증 정보가 없습니다", message: "마이페이지 › 중개사 신청하기에서 인증을 신청해 주세요.")
                 }
@@ -339,7 +372,7 @@ struct AgentInfoView: View {
         let text = a.isApproved ? "인증 완료" : (a.isRejected ? "반려됨" : "심사 중")
         return Text(text)
             .font(.caption.weight(.bold))
-            .foregroundStyle(a.isRejected ? DB.danger : DB.purple)
+            .foregroundStyle(a.isRejected ? DB.danger : DB.accent)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(Color.white, in: Capsule())

@@ -206,6 +206,87 @@ enum Fmt {
 
     /// 지금 시각 ISO8601 (보낸 메시지 임시 표시용)
     static func nowISO() -> String { ISO8601DateFormatter().string(from: Date()) }
+
+    // MARK: - 카드 · 상세 · 채팅 (앱 화면 개선)
+
+    /// 23.06 → "7평", 21.54 → "6.5평" (소수 한 자리, .0 은 뗀다)
+    static func pyeong(_ sqm: Double) -> String {
+        let p = (sqm / 3.3058 * 10).rounded() / 10
+        return (p == p.rounded() ? String(Int(p)) : String(format: "%.1f", p)) + "평"
+    }
+
+    /// 상세 핵심 칸: 23.06 → "23.1㎡ · 7평"
+    static func areaShort(_ sqm: Double) -> String { String(format: "%.1f㎡ · ", sqm) + pyeong(sqm) }
+
+    /// 카드 둘째 줄: "원룸 · 7평 · 4층" (없는 값은 뺀다)
+    static func cardFacts(_ l: Listing) -> String {
+        var parts: [String] = []
+        let type = roomType(l.roomType)
+        if !type.isEmpty { parts.append(type) }
+        if let a = l.area, a > 0 { parts.append(pyeong(a)) }
+        if let f = l.floor { parts.append(floorLabel(f)) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 카드 셋째 줄: "관리비 7만 · 흑석동"
+    static func cardSub(_ l: Listing) -> String {
+        let fee = l.maintenanceFee.map { $0 == 0 ? "관리비 없음" : "관리비 \($0)만" } ?? "관리비 협의"
+        let place = dong(l.location)
+        return place.isEmpty ? fee : "\(fee) · \(place)"
+    }
+
+    /// "서울 동작구 흑석동 중앙하이츠 402호" → "흑석동" (동 · 읍 · 면이 없으면 구, 그것도 없으면 "")
+    static func dong(_ s: String) -> String {
+        let tokens = s.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+        let named = tokens.filter { $0.first?.isNumber == false }
+        if let d = named.first(where: { t in ["동", "읍", "면"].contains(where: { t.hasSuffix($0) }) }) { return d }
+        return named.first(where: { $0.hasSuffix("구") }) ?? ""
+    }
+
+    /// 상세 관리비 칸: "7만 원" · "없음" · "협의"
+    static func feeShort(_ l: Listing) -> String {
+        guard let f = l.maintenanceFee else { return "협의" }
+        return f == 0 ? "없음" : "\(f)만 원"
+    }
+
+    /// 옵션 아이콘 (SF Symbols). 모르는 값은 체크 표시
+    static func optionIcon(_ key: String) -> String {
+        switch key {
+        case "parking": return "car.fill"
+        case "pet": return "pawprint.fill"
+        case "elevator": return "arrow.up.arrow.down.square"
+        case "aircon": return "air.conditioner.horizontal"
+        case "fridge": return "refrigerator"
+        case "washer": return "washer"
+        case "bed": return "bed.double"
+        case "desk": return "table.furniture"
+        case "closet": return "cabinet"
+        case "induction": return "cooktop"
+        default: return "checkmark.circle"
+        }
+    }
+
+    /// 채팅 날짜 구분선: "오늘" · "어제" · "10월 26일 (월)" · 다른 해면 "2025년 9월 24일 (수)"
+    static func chatDay(_ d: Date, now: Date = Date(), calendar cal: Calendar = .current) -> String {
+        if cal.isDate(d, inSameDayAs: now) { return "오늘" }
+        if let y = cal.date(byAdding: .day, value: -1, to: now), cal.isDate(d, inSameDayAs: y) { return "어제" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.calendar = cal
+        f.timeZone = cal.timeZone
+        f.dateFormat = cal.isDate(d, equalTo: now, toGranularity: .year) ? "M월 d일 (E)" : "yyyy년 M월 d일 (E)"
+        return f.string(from: d)
+    }
+
+    /// 말풍선 옆 시각: "오후 3:12"
+    static func chatClock(_ d: Date, calendar cal: Calendar = .current) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.calendar = cal
+        f.timeZone = cal.timeZone
+        f.dateFormat = "a h:mm"
+        return f.string(from: d)
+    }
 }
 
 extension String {

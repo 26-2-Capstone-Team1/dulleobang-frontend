@@ -119,9 +119,10 @@ async function loadScene(p) {
       world.add(new THREE.Points(geo, mat));
     } else {
       // 스캔 파일 없이 벽·문·창·가구 정보만 있을 때 (데모 데이터 · RoomPlan 구조만 올라온 매물)
-      buildBlockout(p.objects || [], new Set(p.removed || []));
+      buildBlockout(p.objects || [], new Set(p.removed || []), p.glass || []);
     }
-    buildOverlay(p.objects || [], new Set(p.removed || []));
+    buildGlass(p.glass || []);
+    buildOverlay(p.objects || [], new Set(p.removed || []), p.glass || []);
     setOverlay(overlayOn);
     setMode(mode);
     post({ type: 'loaded' });
@@ -139,7 +140,38 @@ function clearAll() {
   if (splat) { try { splat.dispose?.(); } catch (_) {} splat = null; }
 }
 
-function buildOverlay(objects, removed) {
+// ---------------------------------------------------------------- glass (서버가 LiDAR 로 찾은 투명 유리)
+// LiDAR 레이저는 맑은 유리를 통과해서 스캔(3DGS · 점 · 메시)에는 유리 자리가 비어 있다. 서버(tools/capture/glass_tools.py)가
+// 그 자리를 찾아 SpaceResponse.glass 로 보내 준다: position = 중심, rotation.yaw, dimensions(width · height · depth).
+const GLASS_KO = { window: '유리창', door: '유리문', wall: '유리벽', gap: '유리벽' };
+
+// RoomPlan 창 · 문과 같은 자리에 서버가 찾은 유리가 있는가 (있으면 RoomPlan 상자 대신 실제 크기의 유리를 그린다)
+function nearGlass(o, glassList) {
+  return glassList.some((g) =>
+    Math.hypot(g.position.x - o.position.x, g.position.z - o.position.z) < Math.max(0.5, o.dimensions.width / 2) &&
+    Math.abs(g.position.y - o.position.y) < Math.max(0.5, o.dimensions.height / 2));
+}
+
+function buildGlass(glassList) {
+  for (const g of glassList) {
+    const dm = g.dimensions;
+    const geo = new THREE.BoxGeometry(Math.max(dm.width, 0.01), Math.max(dm.height, 0.01), Math.max(dm.depth || 0.01, 0.01));
+    const pane = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      color: 0xcfe7ff, emissive: 0x86b9e6, emissiveIntensity: 0.3, roughness: 0.1, metalness: 0,
+      transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    pane.renderOrder = 5;                       // 스캔 · 벽 다음에 겹쳐 그린다 (뒤가 비쳐 보이게)
+    const rim = new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({ color: 0xe6f4ff, transparent: true, opacity: 0.85 }));
+    const grp = new THREE.Group();
+    grp.add(pane, rim);
+    grp.position.set(g.position.x, g.position.y, g.position.z);
+    grp.rotation.y = (g.rotation?.yaw ?? 0) * D2R;
+    world.add(grp);
+  }
+}
+
+function buildOverlay(objects, removed, glassList = []) {
   const r = room, h = r.ceilingY - r.floorY;
   for (const w of r.walls || []) {
     const a = new THREE.Vector3(w.from[0], r.floorY, w.from[1]);
@@ -158,8 +190,9 @@ function buildOverlay(objects, removed) {
     l.position.set(o.position.x, o.position.y + o.dimensions.height / 2 + 0.05, o.position.z);
     overlay.add(lines, l);
   };
-  for (const o of r.doors || []) addOpening(o, 0xff9933, '문', 'door');
-  for (const o of r.windows || []) addOpening(o, 0x66ccff, '창문', 'window');
+  for (const o of r.doors || []) if (!nearGlass(o, glassList)) addOpening(o, 0xff9933, '문', 'door');
+  for (const o of r.windows || []) if (!nearGlass(o, glassList)) addOpening(o, 0x66ccff, '창문', 'window');
+  for (const g of glassList) addOpening(g, 0x9fe3ff, GLASS_KO[g.glassKind] ?? '유리', 'window');
 
   const c = roomCenter();
   const top = label(`층고 ${h.toFixed(2)} m`);
@@ -214,7 +247,7 @@ function woodTexture() {
   return t;
 }
 
-function buildBlockout(objects, removed) {
+function buildBlockout(objects, removed, glassList = []) {
   const r = room, h = r.ceilingY - r.floorY;
   const w = r.bboxMax.x - r.bboxMin.x, d = r.bboxMax.z - r.bboxMin.z;
   const c = roomCenter();
@@ -263,6 +296,7 @@ function buildBlockout(objects, removed) {
   };
   const doorMat = stdMat(0xc49b72, { roughness: 0.7 });
   for (const o of r.doors || []) {
+    if (nearGlass(o, glassList)) continue;      // 서버가 유리문으로 찾은 문은 buildGlass 가 유리로 그린다
     const door = opening(o, doorMat, 0.04);
     const knob = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), stdMat(0xd8d8dc, { metalness: 0.6, roughness: 0.3 }));
     knob.position.set(o.dimensions.width / 2 - 0.1, 0.0, 0);
@@ -271,6 +305,7 @@ function buildBlockout(objects, removed) {
   }
   const glass = stdMat(0xcfe7ff, { emissive: 0x86b9e6, emissiveIntensity: 0.55, roughness: 0.15, transparent: true, opacity: 0.9 });
   for (const o of r.windows || []) {
+    if (nearGlass(o, glassList)) continue;      // 서버가 찾은 유리(실제 유리 크기)가 있으면 buildGlass 가 그린다
     opening(o, glass, 0.03);
     const frame = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(o.dimensions.width, o.dimensions.height, 0.16)),
@@ -311,7 +346,7 @@ function furnitureModel(kind, dm, mine) {
   const g = new THREE.Group();
   const W = Math.max(dm.width, 0.05), H = Math.max(dm.height, 0.05), D = Math.max(dm.depth, 0.05);
   const C = mine
-    ? { wood: 0xb9a0e8, woodDark: 0x8f78d8, fabric: 0x9d8ff0, fabricDark: 0x8577e0, sheet: 0xf7f5ff, blanket: 0x7c6cf0, light: 0xe6e0fb, dark: 0x5a4fb0, metal: 0xd9d4f5 }
+    ? { wood: 0xa8c89d, woodDark: 0x82a978, fabric: 0x96c08a, fabricDark: 0x7fae73, sheet: 0xf4f9f1, blanket: 0x6a9a5e, light: 0xe1eed9, dark: 0x4c7343, metal: 0xd3e4cc }
     : { wood: 0xc8a27c, woodDark: 0x9c7552, fabric: 0x97a3ae, fabricDark: 0x86919c, sheet: 0xf6f5f1, blanket: 0x7f9cc4, light: 0xebe7df, dark: 0x3d4046, metal: 0xd7dade };
   const part = (w, h, d, x, y, z, color, extra) => {   // (x, y, z) = 바닥 중심
     const m = new THREE.Mesh(new THREE.BoxGeometry(Math.max(w, 0.01), Math.max(h, 0.01), Math.max(d, 0.01)), stdMat(color, extra));
@@ -411,13 +446,15 @@ function furnitureModel(kind, dm, mine) {
       break;
     }
     default:
-      part(W, H, D, 0, 0, 0, mine ? 0xb9adf5 : 0xd4d0c8);
+      part(W, H, D, 0, 0, 0, mine ? 0xb2d0a8 : 0xd4d0c8);
   }
   return g;
 }
 
 // ---------------------------------------------------------------- camera modes
 const walk = { yaw: 0, pitch: -0.15, pos: new THREE.Vector3(0, EYE, 3) };
+// 화각(세로 FOV, 도): 1인칭은 조금 넓게 시작하고, 두 손가락으로 오므리면 더 넓게(축소) · 벌리면 좁게(확대)
+const FOV_WALK = 72, FOV_OVERVIEW = 65, FOV_MIN = 30, FOV_MAX = 100;
 
 function clampWalk() {
   const m = 0.25;
@@ -436,9 +473,12 @@ function setMode(m) {
     walk.yaw = 0;
     walk.pitch = -0.15;
     clampWalk();
+    camera.fov = FOV_WALK;                         // 확대 · 축소했던 것도 처음으로
     camera.near = 0.05; camera.far = 100; camera.updateProjectionMatrix();
   } else {
     controls.enabled = true;
+    camera.fov = FOV_OVERVIEW;
+    camera.updateProjectionMatrix();
     controls.target.copy(c);
     const span = Math.max(room.bboxMax.x - room.bboxMin.x, room.bboxMax.z - room.bboxMin.z, 2);
     // 평면뷰: 방 중심 바로 위에서 내려다보며 시작 (한 손가락으로 돌리고 기울이면 입체로 볼 수 있다)
@@ -461,13 +501,26 @@ function updateCutaway() {
   if (Math.abs(camera.near - near) > 1e-3) { camera.near = near; camera.far = near + 60; camera.updateProjectionMatrix(); }
 }
 
-// 1인칭: 한 손가락 = 둘러보기, 두 손가락 드래그 = 이동(위=앞, 오른쪽=오른쪽)
+// 1인칭: 한 손가락 = 둘러보기, 두 손가락 = 끌면 이동(위=앞, 오른쪽=오른쪽) · 오므리면 넓게 · 벌리면 가깝게.
+// 확대 · 축소는 화각으로 하고, 가장 넓게 본 상태에서 더 오므리면 바라보는 반대쪽으로 물러난다 (방 밖으로는 안 나감)
 const touches = new Map();
-let lastMid = null;
+let lastMid = null, lastSpread = null, twoMode = null, twoAcc = { move: 0, zoom: 0 };
+function resetTwo() { lastMid = null; lastSpread = null; twoMode = null; twoAcc = { move: 0, zoom: 0 }; }
+
+function zoomWalk(ratio) {            // ratio > 1 = 오므림(넓게), < 1 = 벌림(가깝게)
+  const want = camera.fov * ratio;
+  if (want > FOV_MAX && room) {       // 이미 가장 넓으면 한 걸음씩 뒤로
+    walk.pos.addScaledVector(new THREE.Vector3(Math.sin(walk.yaw), 0, Math.cos(walk.yaw)), (want - FOV_MAX) / FOV_MAX * 1.5);
+    clampWalk();
+  }
+  const fov = clamp(want, FOV_MIN, FOV_MAX);
+  if (Math.abs(fov - camera.fov) > 1e-3) { camera.fov = fov; camera.updateProjectionMatrix(); }
+}
+
 cvs.addEventListener('pointerdown', (e) => {
   if (mode !== 'walk' || drag) return;
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  lastMid = null;
+  resetTwo();
 });
 cvs.addEventListener('pointermove', (e) => {
   if (mode !== 'walk' || drag || !room || !touches.has(e.pointerId)) return;
@@ -475,24 +528,43 @@ cvs.addEventListener('pointermove', (e) => {
   const dx = e.clientX - t.x, dy = e.clientY - t.y;
   t.x = e.clientX; t.y = e.clientY;
   if (touches.size === 1) {
-    walk.yaw += dx * 0.005;
-    walk.pitch = clamp(walk.pitch + dy * 0.005, -1.3, 1.3);
+    const k = 0.005 * camera.fov / FOV_WALK;          // 확대했을 때는 천천히 돈다
+    walk.yaw += dx * k;
+    walk.pitch = clamp(walk.pitch + dy * k, -1.3, 1.3);
   } else {
     const [a, b] = [...touches.values()];
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    if (lastMid) {
-      const mx = mid.x - lastMid.x, my = mid.y - lastMid.y;
-      const f = new THREE.Vector3(-Math.sin(walk.yaw), 0, -Math.cos(walk.yaw));
-      const r = new THREE.Vector3(Math.cos(walk.yaw), 0, -Math.sin(walk.yaw));
-      walk.pos.addScaledVector(f, -my * 0.01).addScaledVector(r, mx * 0.01);
-      clampWalk();
+    const spread = Math.hypot(a.x - b.x, a.y - b.y);
+    if (lastMid && lastSpread) {
+      const mx = mid.x - lastMid.x, my = mid.y - lastMid.y, ds = spread - lastSpread;
+      if (!twoMode) {                  // 처음 몇 픽셀로 '이동' 인지 '확대 · 축소' 인지 정한다 (섞이면 걸으면서 화면이 출렁인다)
+        twoAcc.move += Math.hypot(mx, my);
+        twoAcc.zoom += Math.abs(ds);
+        if (twoAcc.move + twoAcc.zoom > 12) twoMode = twoAcc.zoom > twoAcc.move ? 'zoom' : 'move';
+      }
+      if (twoMode === 'move') {
+        const f = new THREE.Vector3(-Math.sin(walk.yaw), 0, -Math.cos(walk.yaw));
+        const r = new THREE.Vector3(Math.cos(walk.yaw), 0, -Math.sin(walk.yaw));
+        walk.pos.addScaledVector(f, -my * 0.01).addScaledVector(r, mx * 0.01);
+        clampWalk();
+      } else if (twoMode === 'zoom' && spread > 10) {
+        zoomWalk(lastSpread / spread);
+      }
     }
     lastMid = mid;
+    lastSpread = spread;
   }
 });
-const endTouch = (e) => { touches.delete(e.pointerId); lastMid = null; };
+const endTouch = (e) => { touches.delete(e.pointerId); resetTwo(); };
 cvs.addEventListener('pointerup', endTouch);
 cvs.addEventListener('pointercancel', endTouch);
+// 트랙패드 · 마우스 휠 (시뮬레이터 · Mac 디버깅): 아래로 굴리면 넓게
+cvs.addEventListener('wheel', (e) => {
+  if (mode !== 'walk' || !room) return;
+  e.preventDefault();
+  zoomWalk(Math.exp(e.deltaY * 0.002));
+}, { passive: false });
+
 
 // ---------------------------------------------------------------- furniture
 const gltfLoader = new GLTFLoader();
@@ -527,20 +599,24 @@ function sendTransform(id, final) {
   post({ type: 'transform', id, x: f.root.position.x, z: f.root.position.z, yaw: f.root.rotation.y / D2R, final });
 }
 
-// document 캡처 단계에서 먼저 받아, 가구를 잡았으면 카메라 조작으로 넘기지 않는다
+// document 캡처 단계에서 먼저 받는다. 이미 고른 내 가구 위에서 시작한 한 손가락만 '끌어서 옮기기',
+// 그 밖(고르지 않은 가구 포함)은 카메라 조작으로 넘긴다 → 가구가 화면을 덮어도 둘러보기 · 확대 · 축소가 막히지 않는다.
+// 짧게 탭하면 그 가구를 고르고(새로 놓은 가구는 이미 골라져 있다), 빈 곳을 탭하면 선택을 푼다
+const fingers = new Set();
 document.addEventListener('pointerdown', (e) => {
   if (!room || e.target !== cvs) return;
+  fingers.add(e.pointerId);
   const id = pickFurniture(e);
-  if (id) {
+  if (id && id === selected && fingers.size === 1) {
     const f = furn.get(id), p = floorHit(e);
     drag = { id, pid: e.pointerId, off: p ? f.root.position.clone().sub(p) : new THREE.Vector3() };
     controls.enabled = false;
-    select(id);
     e.stopPropagation();
   } else {
-    down = { x: e.clientX, y: e.clientY, t: performance.now() };
+    down = fingers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), id } : null;
   }
 }, true);
+
 
 document.addEventListener('pointermove', (e) => {
   if (!drag || e.pointerId !== drag.pid) return;
@@ -556,6 +632,7 @@ document.addEventListener('pointermove', (e) => {
 }, true);
 
 document.addEventListener('pointerup', (e) => {
+  fingers.delete(e.pointerId);
   if (drag && e.pointerId === drag.pid) {
     sendTransform(drag.id, true);
     drag = null;
@@ -563,8 +640,17 @@ document.addEventListener('pointerup', (e) => {
     e.stopPropagation();
     return;
   }
-  if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8 && performance.now() - down.t < 300) select(null);
+  if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8 && performance.now() - down.t < 300) select(down.id);
   down = null;
+}, true);
+document.addEventListener('pointercancel', (e) => {
+  fingers.delete(e.pointerId);
+  down = null;
+  if (drag && e.pointerId === drag.pid) {
+    sendTransform(drag.id, true);
+    drag = null;
+    controls.enabled = mode !== 'walk';
+  }
 }, true);
 
 function fitToDims(model, d) {

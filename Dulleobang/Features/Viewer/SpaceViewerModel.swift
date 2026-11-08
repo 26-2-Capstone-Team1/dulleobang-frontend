@@ -35,6 +35,7 @@ struct ScenePayload: Encodable {
     let room: RoomPayload
     let objects: [SceneObject]
     let removed: [String]
+    let glass: [GlassPane]                      // 서버가 찾은 투명 유리 → 뷰어가 반투명 유리 상자로 그린다
 }
 
 struct FurniturePayload: Encodable {
@@ -157,7 +158,7 @@ final class SpaceViewerModel: ObservableObject {
             if isStale() { return }
             guard ready else { throw ViewerError("3D 뷰어를 시작하지 못했습니다 (인터넷 연결 확인)") }
             viewer.call("loadScene", ScenePayload(splatUrl: splatURL, pointsUrl: pointsURL, room: RoomPayload(room),
-                                                  objects: space.objects, removed: removed))
+                                                  objects: space.objects, removed: removed, glass: room.glass))
             viewer.call("setMode", mode.rawValue)
             viewer.call("setOverlay", overlay)
             pendingCarry = nil

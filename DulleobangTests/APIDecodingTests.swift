@@ -235,6 +235,8 @@ final class MockBackendTests: XCTestCase {
         let room = Room(space: space)
         XCTAssertEqual(room.walls.count, 4)
         XCTAssertEqual(space.spaceVersion, 1)
+        XCTAssertEqual(space.glass.count, room.windows.count, "데모 공간은 창마다 서버가 찾은 유리가 있다 (seed 3)")
+        XCTAssertEqual(room.glass.count, space.glass.count)
         let mine = try await list(backend, "listings/101/room-states", of: RoomState.self)
         let rsId = try XCTUnwrap(mine.first?.roomStateId)
         let rs: RoomState = try await call(backend, "GET", "room-states/\(rsId)")
@@ -500,5 +502,106 @@ final class MockBackendTests: XCTestCase {
         XCTAssertEqual(Fmt.withAnd("책상"), "책상과")
         XCTAssertEqual(Fmt.withAnd("TV"), "TV와")
         XCTAssertEqual(Fmt.objectLabel("washerDryer"), "세탁기")
+    }
+}
+
+/// 앱 화면 개선: 카드 · 상세 문구, 빠른 필터(3D만), 채팅 날짜 구분 · 시각, 매물 등록 단계 확인
+final class AppScreenTests: XCTestCase {
+    private func listing(location: String = "서울 동작구 흑석동 중앙하이츠 402호", fee: Int? = 7, area: Double? = 23.06,
+                         floor: Int? = 4, status: String? = nil) -> Listing {
+        var l = Listing(listingId: "1", location: location, price: Price(deposit: 1000, monthly: 57), dealType: "MONTHLY",
+                        maintenanceFee: fee, roomType: "ONE_ROOM", floor: floor, totalFloors: 5, area: area)
+        if let status { l.space3DInfo = Space3DInfo(status: status) }
+        return l
+    }
+
+    func testPyeongAndAreaShort() {
+        XCTAssertEqual(Fmt.pyeong(23.06), "7평")
+        XCTAssertEqual(Fmt.pyeong(21.54), "6.5평")
+        XCTAssertEqual(Fmt.pyeong(34.82), "10.5평")
+        XCTAssertEqual(Fmt.areaShort(23.06), "23.1㎡ · 7평")
+    }
+
+    func testCardLines() {
+        let l = listing()
+        XCTAssertEqual(Fmt.cardFacts(l), "원룸 · 7평 · 4층")
+        XCTAssertEqual(Fmt.cardSub(l), "관리비 7만 · 흑석동")
+        XCTAssertEqual(Fmt.feeShort(l), "7만 원")
+        let bare = listing(location: "", fee: nil, area: nil, floor: nil)
+        XCTAssertEqual(Fmt.cardFacts(bare), "원룸")
+        XCTAssertEqual(Fmt.cardSub(bare), "관리비 협의")
+        XCTAssertEqual(Fmt.feeShort(bare), "협의")
+        XCTAssertEqual(Fmt.cardSub(listing(fee: 0)), "관리비 없음 · 흑석동")
+    }
+
+    func testDong() {
+        XCTAssertEqual(Fmt.dong("서울 동작구 흑석동 중앙하이츠 402호"), "흑석동")
+        XCTAssertEqual(Fmt.dong("서울 동작구 상도동 123-4, 302호"), "상도동")
+        XCTAssertEqual(Fmt.dong("서울 영등포구"), "영등포구")
+        XCTAssertEqual(Fmt.dong(""), "")
+    }
+
+    func testOptionIcons() {
+        for o in Fmt.options { XCTAssertNotEqual(Fmt.optionIcon(o.key), "checkmark.circle", o.key) }
+        XCTAssertEqual(Fmt.optionIcon("sauna"), "checkmark.circle")
+    }
+
+    func testSpaceOnlyFilter() {
+        var q = ListingQuery()
+        XCTAssertFalse(q.isFiltered)
+        q.spaceOnly = true
+        XCTAssertTrue(q.isFiltered)
+        XCTAssertFalse(q.hasPriceLimit, "빠른 칩은 필터 버튼을 켜지 않는다")
+        XCTAssertTrue(q.matches(listing(status: "COMPLETED")))
+        XCTAssertFalse(q.matches(listing(status: "RUNNING")))
+        XCTAssertFalse(q.matches(listing()))
+        XCTAssertFalse(q.items.contains { $0.name.lowercased().contains("space") }, "서버에는 보내지 않고 받은 목록에서 거른다")
+        q.maxDeposit = 1000
+        XCTAssertTrue(q.hasPriceLimit)
+    }
+
+    func testChatTimelineDaysAndTimes() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let now = ISO8601DateFormatter().date(from: "2026-10-28T01:00:00Z")!     // 10월 28일 오전 10시 (한국)
+        func msg(_ id: String, _ who: String, _ at: String) -> ChatMessage {
+            ChatMessage(messageId: id, senderId: who, senderName: nil, message: id, sentAt: at)
+        }
+        let items = ChatTimeline.items([
+            msg("a", "agent", "2026-10-26T06:12:00Z"),     // 월요일 오후 3:12
+            msg("b", "me", "2026-10-26T06:32:10Z"),
+            msg("c", "me", "2026-10-26T06:32:40Z"),        // 같은 사람 · 같은 분 → b 에는 시각을 붙이지 않는다
+            msg("d", "agent", "2026-10-28T00:28:00Z"),     // 오늘 오전 9:28
+        ], now: now, calendar: cal)
+        XCTAssertEqual(items.count, 6)
+        XCTAssertEqual(items[0], .day("10월 26일 (월)"))
+        XCTAssertEqual(items[1], .message(msg("a", "agent", "2026-10-26T06:12:00Z"), time: "오후 3:12"))
+        if case .message(_, let t) = items[2] { XCTAssertNil(t) } else { XCTFail("b") }
+        if case .message(_, let t) = items[3] { XCTAssertEqual(t, "오후 3:32") } else { XCTFail("c") }
+        XCTAssertEqual(items[4], .day("오늘"))
+        if case .message(_, let t) = items[5] { XCTAssertEqual(t, "오전 9:28") } else { XCTFail("d") }
+    }
+
+    func testRegisterStepsCheckOnlyRequiredFields() {
+        typealias V = ListingRegisterView
+        XCTAssertEqual(V.Step.allCases.count, 5)
+        XCTAssertNotNil(V.problem(for: .basics, address: "  ", dealType: "MONTHLY", deposit: "", monthly: "", area: ""))
+        XCTAssertNil(V.problem(for: .basics, address: "서울 동작구 상도동", dealType: "MONTHLY", deposit: "", monthly: "", area: ""))
+        XCTAssertNotNil(V.problem(for: .price, address: "", dealType: "MONTHLY", deposit: "500", monthly: "", area: ""))
+        XCTAssertNil(V.problem(for: .price, address: "", dealType: "JEONSE", deposit: "25000", monthly: "", area: ""))
+        XCTAssertNotNil(V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "0"))
+        XCTAssertNil(V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "23.5"))
+        XCTAssertNil(V.problem(for: .media, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: ""), "사진 · 촬영은 선택")
+    }
+}
+
+/// 서버 주소를 따로 넣지 않으면 팀 GCP 서버로 간다 (기기에 저장해 둔 주소는 테스트 뒤 되돌림)
+final class ServerConfigTests: XCTestCase {
+    func testDefaultServerIsTeamBackend() {
+        let saved = UserDefaults.standard.string(forKey: "baseURL")
+        UserDefaults.standard.removeObject(forKey: "baseURL")
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: "baseURL") } }
+        XCTAssertEqual(AppConfig.shared.baseURL.absoluteString, "http://34.47.87.3:8080/api")
+        XCTAssertEqual(AssetURL.resolve("/files/a.ply")?.absoluteString, "http://34.47.87.3:8080/files/a.ply")
     }
 }

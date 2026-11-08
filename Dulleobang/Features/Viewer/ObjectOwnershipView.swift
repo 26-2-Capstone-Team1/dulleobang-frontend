@@ -166,7 +166,7 @@ struct RoomStateCreateView: View {
                             } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: selected.contains(o.objectId) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selected.contains(o.objectId) ? DB.purple : Color.secondary)
+                                        .foregroundStyle(selected.contains(o.objectId) ? DB.accent : Color.secondary)
                                         .font(.title3)
                                     Text(Fmt.objectLabel(o.category)).font(.subheadline.weight(.semibold))
                                     Spacer()

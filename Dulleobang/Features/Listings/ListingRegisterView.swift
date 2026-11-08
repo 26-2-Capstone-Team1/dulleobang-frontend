@@ -1,7 +1,7 @@
 import PhotosUI
 import SwiftUI
 
-/// 매물 등록하기 (데모 "중개인의 매물 등록하기" 화면 + 둘러방 공간 촬영):
+/// 매물 등록하기 (데모 "중개인의 매물 등록하기" 화면 + 둘러방 공간 촬영) — 5단계(기본 정보 · 가격 · 방 정보 · 사진·3D · 확인), 마지막에 미리보기:
 /// 등록 명의 · 주소 · 가격 · 관리비 · 방 종류 · 층 · 면적(m²/평) · 방/욕실 수 · 입주 가능일 · 공간 자료(공간 촬영 | 이미지 선택) · 옵션
 /// 제출 순서: POST /listings → POST /listings/{id}/images (선택한 사진) → POST /listings/{id}/captures (촬영본 zip)
 /// 중간에 실패하면 끝난 단계는 건너뛰고 이어서 재시도한다.
@@ -28,7 +28,8 @@ struct ListingRegisterView: View {
     @State private var options: Set<String> = []
 
     // 공간 자료
-    @State private var mediaTab = MediaTab.capture
+    @State private var step = Step.basics
+    @State private var stepHint: String?             // 다음으로 못 넘어간 이유 (아래 버튼 위에 빨갛게)
     @State private var showCapture = false
     @State private var captured: CapturedSpace?
     @State private var pickerItems: [PhotosPickerItem] = []
@@ -45,7 +46,39 @@ struct ListingRegisterView: View {
     @State private var error: String?
 
     enum AreaUnit: Hashable { case sqm, pyeong }
-    enum MediaTab: Hashable { case capture, images }
+
+    /// 등록 단계 (한 화면에 한 가지씩, 마지막에 세입자에게 보일 모습을 미리 본다)
+    enum Step: Int, CaseIterable, Hashable {
+        case basics, price, room, media, review
+
+        var title: String {
+            switch self {
+            case .basics: return "기본 정보"
+            case .price: return "가격"
+            case .room: return "방 정보"
+            case .media: return "사진 · 3D"
+            case .review: return "확인"
+            }
+        }
+    }
+
+    /// 단계마다 꼭 필요한 칸 (나머지는 선택). nil = 다음으로 넘어가도 된다. buildRequest() 의 조건과 같다
+    static func problem(for step: Step, address: String, dealType: String, deposit: String, monthly: String,
+                        area: String) -> String? {
+        switch step {
+        case .basics:
+            return address.trimmed.isEmpty ? "주소를 입력해 주세요" : nil
+        case .price:
+            if Int(deposit.trimmed) == nil { return "보증금을 숫자로 입력해 주세요 (만원)" }
+            if dealType == "MONTHLY" && Int(monthly.trimmed) == nil { return "월세를 숫자로 입력해 주세요 (만원)" }
+            return nil
+        case .room:
+            guard let a = Double(area.trimmed), a > 0 else { return "전용면적을 입력해 주세요" }
+            return nil
+        case .media, .review:
+            return nil
+        }
+    }
 
     private var isSubmitting: Bool { stage != nil }
     private var canSubmit: Bool {
@@ -53,25 +86,45 @@ struct ListingRegisterView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                headerSection
-                priceSection
-                roomSection
-                mediaSection
-                optionSection
+        VStack(spacing: 0) {
+            progressHeader
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 26) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(headline).font(.title2.weight(.bold)).foregroundStyle(DB.ink)
+                            Text(subtitle).font(.subheadline).foregroundStyle(DB.sub)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .id("top")
+                        switch step {
+                        case .basics: basicsStep
+                        case .price: priceStep
+                        case .room: roomStep
+                        case .media: mediaStep
+                        case .review: reviewStep
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 24)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: step) { _, _ in proxy.scrollTo("top", anchor: .top) }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 4)
-            .padding(.bottom, 24)
         }
-        .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .bottom) { submitBar }
+        .safeAreaInset(edge: .bottom) { bottomBar }
+        .navigationTitle("매물 등록")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .navigationBarBackButtonHidden(isSubmitting)          // 업로드 중 뒤로 가면 끝난 뒤 엉뚱한 화면이 바뀌므로 막는다
         .onChange(of: pickerItems) { _, items in
             Task { await loadPhotos(items) }
         }
+        .onChange(of: address) { _, _ in stepHint = nil }
+        .onChange(of: deposit) { _, _ in stepHint = nil }
+        .onChange(of: monthly) { _, _ in stepHint = nil }
+        .onChange(of: areaText) { _, _ in stepHint = nil }
         .fullScreenCover(isPresented: $showCapture) {
             CaptureFlowView(target: .deferred(.room), onFinish: {}, onCaptured: { space in
                 captured = space
@@ -81,26 +134,79 @@ struct ListingRegisterView: View {
         .errorAlert($error)
     }
 
-    // MARK: - 입력 칸
+    // MARK: - 단계
 
-    private var headerSection: some View {
+    /// 위: 5칸 진행 막대 + 단계 이름 (지금 단계는 초록)
+    private var progressHeader: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                ForEach(Step.allCases, id: \.self) { s in
+                    Capsule()
+                        .fill(s.rawValue <= step.rawValue ? DB.accent : DB.line)
+                        .frame(height: 5)
+                }
+            }
+            HStack(spacing: 0) {
+                ForEach(Step.allCases, id: \.self) { s in
+                    Text(s.title)
+                        .font(.caption2.weight(s == step ? .bold : .medium))
+                        .foregroundStyle(s == step ? DB.accent : DB.faint)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Step.allCases.count)단계 중 \(step.rawValue + 1)단계, \(step.title)")
+    }
+
+    private var headline: String {
+        switch step {
+        case .basics: return "어떤 집인가요?"
+        case .price: return "가격을 알려 주세요"
+        case .room: return "방 정보를 적어 주세요"
+        case .media: return "방을 한 바퀴 촬영해 주세요"
+        case .review: return "이대로 올릴까요?"
+        }
+    }
+
+    private var subtitle: String {
+        switch step {
+        case .basics: return "주소와 방 종류부터 알려 주세요."
+        case .price: return "만원 단위로 적어 주세요."
+        case .room: return "전용면적만 꼭 필요하고 나머지는 선택이에요."
+        case .media: return "촬영본으로 3D 공간 · 실측 치수 · 평면도가 자동으로 만들어져요. 사진은 따로 골라도 돼요."
+        case .review: return "등록하면 사진과 촬영본이 올라가고 3D 공간 생성이 시작돼요."
+        }
+    }
+
+    private var basicsStep: some View {
         VStack(alignment: .leading, spacing: 28) {
-            Text("매물 등록하기").font(.title.weight(.bold)).foregroundStyle(DB.ink)
             ownerCard
             if createdId != nil {
                 Label("매물 정보는 저장되었습니다. 남은 업로드를 이어서 진행합니다.", systemImage: "checkmark.circle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(DB.purple)
+                    .foregroundStyle(DB.accent)
+            }
+            FieldBlock(title: "주소") {
+                DBTextField(placeholder: "예: 서울 동작구 상도동 123-4, 302호", text: $address)
+            }
+            FieldBlock(title: "방 종류") {
+                FlowStack {
+                    ForEach(Fmt.roomTypes.indices, id: \.self) { i in
+                        Chip(label: Fmt.roomTypes[i].label, selected: roomType == Fmt.roomTypes[i].key) {
+                            roomType = Fmt.roomTypes[i].key
+                        }
+                    }
+                }
             }
         }
     }
 
-    private var priceSection: some View {
+    private var priceStep: some View {
         VStack(alignment: .leading, spacing: 28) {
-            FieldBlock(title: "주소") {
-                DBTextField(placeholder: "예: 서울 동작구 상도동 123-4, 302호", text: $address)
-            }
-
             FieldBlock(title: "가격", subtitle: "만원 단위") {
                 SegmentedPills(options: [(value: "MONTHLY", label: "월세"), (value: "JEONSE", label: "전세")],
                                selection: $dealType)
@@ -115,32 +221,14 @@ struct ListingRegisterView: View {
                         .font(.caption).foregroundStyle(DB.sub)
                 }
             }
-
             FieldBlock(title: "관리비", subtitle: "만원 단위 · 비워 두면 ‘관리비 협의’로 표시됩니다") {
                 DBTextField(placeholder: "예: 5", text: $fee, keyboard: .numberPad)
             }
         }
     }
 
-    private var roomSection: some View {
+    private var roomStep: some View {
         VStack(alignment: .leading, spacing: 28) {
-            FieldBlock(title: "방 종류") {
-                FlowStack {
-                    ForEach(Fmt.roomTypes.indices, id: \.self) { i in
-                        Chip(label: Fmt.roomTypes[i].label, selected: roomType == Fmt.roomTypes[i].key) {
-                            roomType = Fmt.roomTypes[i].key
-                        }
-                    }
-                }
-            }
-
-            FieldBlock(title: "층") {
-                HStack(spacing: 10) {
-                    DBTextField(placeholder: "해당층", text: $floorText, keyboard: .numbersAndPunctuation)
-                    DBTextField(placeholder: "건물층", text: $totalFloorsText, keyboard: .numberPad)
-                }
-            }
-
             FieldBlock(title: "면적") {
                 HStack(spacing: 10) {
                     DBTextField(placeholder: "전용면적", text: $areaText, keyboard: .decimalPad)
@@ -150,14 +238,18 @@ struct ListingRegisterView: View {
                 }
                 DBTextField(placeholder: "공급면적 (선택)", text: $supplyText, keyboard: .decimalPad)
             }
-
+            FieldBlock(title: "층") {
+                HStack(spacing: 10) {
+                    DBTextField(placeholder: "해당층", text: $floorText, keyboard: .numbersAndPunctuation)
+                    DBTextField(placeholder: "건물층", text: $totalFloorsText, keyboard: .numberPad)
+                }
+            }
             FieldBlock(title: "방 수 / 욕실 수") {
                 HStack(spacing: 10) {
                     DBTextField(placeholder: "방 수", text: $roomsText, keyboard: .numberPad)
                     DBTextField(placeholder: "욕실 수", text: $bathsText, keyboard: .numberPad)
                 }
             }
-
             FieldBlock(title: "입주 가능일") {
                 SegmentedPills(options: [(value: true, label: "즉시"), (value: false, label: "날짜 선택")], selection: $immediate)
                 if !immediate {
@@ -169,27 +261,11 @@ struct ListingRegisterView: View {
                         .background(DB.field, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
-        }
-    }
-
-    private var mediaSection: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            FieldBlock(title: "공간 자료", subtitle: "방을 촬영하거나 준비된 이미지를 선택해 매물에 연결하세요.") {
-                SegmentedPills(options: [(value: MediaTab.capture, label: captured == nil ? "공간 촬영" : "공간 촬영 ✓"),
-                                         (value: MediaTab.images, label: selectedOrder.isEmpty ? "이미지 선택" : "이미지 선택 ✓")],
-                               selection: $mediaTab, height: 44)
-                if mediaTab == .capture { capturePanel } else { imagePanel }
-            }
-        }
-    }
-
-    private var optionSection: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            FieldBlock(title: "옵션 선택") {
-                VStack(alignment: .leading, spacing: 12) {
+            FieldBlock(title: "옵션", subtitle: "있는 것을 모두 눌러 주세요") {
+                FlowStack {
                     ForEach(Fmt.options.indices, id: \.self) { i in
                         let key = Fmt.options[i].key
-                        CheckRow(label: Fmt.options[i].label, checked: options.contains(key)) {
+                        Chip(label: Fmt.options[i].label, selected: options.contains(key)) {
                             if options.contains(key) { _ = options.remove(key) } else { _ = options.insert(key) }
                         }
                     }
@@ -198,12 +274,133 @@ struct ListingRegisterView: View {
         }
     }
 
+    private var mediaStep: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 14) { capturePanel }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("사진").font(.title3.weight(.bold)).foregroundStyle(DB.ink)
+                    Text("선택 · 최대 \(AppConfig.shared.maxListingPhotos)장").font(.caption).foregroundStyle(DB.sub)
+                }
+                imagePanel
+            }
+        }
+    }
+
+    private var reviewStep: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("세입자에게 이렇게 보여요").font(.caption.weight(.bold)).foregroundStyle(DB.accent)
+                previewCard
+                if captured != nil {
+                    Text("3D 표시는 촬영본으로 3D 공간이 만들어지면 붙어요.").font(.caption).foregroundStyle(DB.sub)
+                }
+            }
+            reviewSection("기본 정보", .basics) {
+                InfoRow(label: "주소", value: address.trimmed.ifEmpty("-"))
+                InfoRow(label: "방 종류", value: Fmt.roomType(roomType))
+            }
+            reviewSection("가격", .price) {
+                InfoRow(label: dealType == "JEONSE" ? "전세" : "월세", value: Fmt.priceShort(draftListing))
+                InfoRow(label: "관리비", value: Fmt.fee(draftListing))
+            }
+            reviewSection("방 정보", .room) {
+                InfoRow(label: "전용면적", value: draftListing.area.map { Fmt.areaShort($0) } ?? "-")
+                InfoRow(label: "층", value: Fmt.floors(draftListing))
+                InfoRow(label: "방 / 욕실", value: Fmt.roomsBaths(draftListing))
+                InfoRow(label: "입주 가능일", value: Fmt.available(draftListing.availableFrom))
+                InfoRow(label: "옵션", value: optionSummary)
+            }
+            reviewSection("사진 · 3D", .media) {
+                InfoRow(label: "공간 촬영", value: captureSummary)
+                InfoRow(label: "사진", value: selectedOrder.isEmpty ? "없음" : "\(selectedOrder.count)장")
+            }
+            if captured == nil && selectedOrder.isEmpty {
+                Label("사진도 공간 촬영도 없으면 세입자에게 사진 없이 보여요", systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.orange)
+            }
+            if createdId != nil {
+                Label("매물 정보는 저장되었습니다. 남은 업로드를 이어서 진행합니다.", systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(DB.accent)
+            }
+        }
+    }
+
+    private var optionSummary: String {
+        let names = Fmt.options.filter { options.contains($0.key) }.map { $0.label }
+        return names.isEmpty ? "없음" : names.joined(separator: ", ")
+    }
+
+    private var captureSummary: String {
+        guard let c = captured else { return "없음" }
+        return "\(c.frameCount)장 · " + (captureUploaded ? "업로드 완료" : "등록할 때 업로드")
+    }
+
+    /// 확인 단계 묶음: 제목 + [수정] (그 단계로 돌아가기 · 매물 정보를 이미 저장했으면 막는다)
+    private func reviewSection<C: View>(_ title: String, _ target: Step, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title).font(.headline.weight(.bold)).foregroundStyle(DB.ink)
+                Spacer()
+                Button("수정") { go(to: target) }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DB.accent)
+                    .disabled(isSubmitting || createdId != nil)
+            }
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DB.group, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// 세입자에게 보일 카드 그대로 (첫 사진 · 가격 · 방 정보)
+    private var previewCard: some View {
+        let l = draftListing
+        return HStack(spacing: 14) {
+            Group {
+                if let first = orderedPhotos.first {
+                    Image(uiImage: first.thumb).resizable().scaledToFill()
+                } else {
+                    ImagePlaceholder(icon: "house")
+                }
+            }
+            .frame(width: 110, height: 84)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(Fmt.price(l)).font(.headline.weight(.heavy)).foregroundStyle(DB.ink).lineLimit(1)
+                Text(Fmt.cardFacts(l).ifEmpty(" ")).font(.footnote).foregroundStyle(DB.ink).lineLimit(1)
+                Text(Fmt.cardSub(l)).font(.caption).foregroundStyle(DB.sub).lineLimit(1)
+                if session.isBroker { VerifiedBrokerBadge() }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(DB.line))
+    }
+
+    /// 입력한 값으로 만든 미리보기용 매물 (실제 등록 요청은 buildRequest)
+    private var draftListing: Listing {
+        let factor = areaUnit == .pyeong ? 3.3058 : 1.0
+        return Listing(listingId: createdId ?? "draft", location: address.trimmed,
+                       price: Price(deposit: Int(deposit.trimmed) ?? 0, monthly: dealType == "JEONSE" ? 0 : (Int(monthly.trimmed) ?? 0)),
+                       dealType: dealType, maintenanceFee: Int(fee.trimmed), roomType: roomType,
+                       floor: Int(floorText.trimmed), totalFloors: Int(totalFloorsText.trimmed),
+                       area: Double(areaText.trimmed).map { $0 * factor },
+                       rooms: Int(roomsText.trimmed), bathrooms: Int(bathsText.trimmed),
+                       availableFrom: immediate ? "IMMEDIATE" : Fmt.isoDay(moveInDate))
+    }
+
+
     // MARK: - 등록 명의
 
     private var ownerCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text("등록 명의").font(.caption.weight(.bold)).foregroundStyle(DB.purple)
+                Text("등록 명의").font(.caption.weight(.bold)).foregroundStyle(DB.accent)
                 if session.isBroker { VerifiedBrokerBadge() }
             }
             if session.isBroker {
@@ -227,7 +424,7 @@ struct ListingRegisterView: View {
         if let c = captured {
             VStack(alignment: .leading, spacing: 10) {
                 Label("공간 촬영 완료", systemImage: "checkmark.circle.fill")
-                    .font(.headline).foregroundStyle(DB.purple)
+                    .font(.headline).foregroundStyle(DB.accent)
                 Text("\(c.frameCount)장 · \(String(format: "%.0f", c.sizeMB)) MB · LiDAR 깊이 \(c.hasDepth ? "✓" : "없음") · 방 구조 \(c.hasRoomPlan ? "✓" : "없음")")
                     .font(.caption).foregroundStyle(DB.ink)
                 Text(captureUploaded ? "업로드 완료 · 3D 공간 생성이 시작되었습니다."
@@ -247,23 +444,45 @@ struct ListingRegisterView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DB.purpleSoft, in: RoundedRectangle(cornerRadius: 14))
+            .background(DB.accentSoft, in: RoundedRectangle(cornerRadius: 14))
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                tip("방 입구에서 시작해 벽을 따라 걸으면서 천천히 한 바퀴 돌아 주세요 (2~3분).")
-                tip("창문 · 문 · 방 구석이 모두 화면에 들어오게, 다른 사람은 방 밖에서 기다리게 해 주세요.")
-                tip("그다음 폰을 아래로 30~45° 기울여 바닥이 화면 절반쯤 보이게 한 바퀴 더 돌아 주세요.")
-                tip("너무 빠르거나 제자리에서만 찍거나 바닥이 덜 찍히면 촬영 화면에 경고가 떠요.")
-                tip(RoomPlanController.isSupported ? "LiDAR 기기라서 실제 치수와 벽·문·창 구조가 함께 저장됩니다."
-                                                   : "LiDAR 가 없는 기기입니다. 사진과 카메라 위치만 저장됩니다.")
-            }
             Button {
                 showCapture = true
             } label: {
-                dashedBox(title: "공간 촬영 시작하기", message: "촬영본으로 3D 공간 · 실측 치수 · 입주 예상 공간을 만듭니다.",
-                          icon: "camera.viewfinder")
+                VStack(spacing: 8) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 58, height: 58)
+                        .background(DB.accent, in: Circle())
+                    Text("공간 촬영 시작하기").font(.headline.weight(.bold)).foregroundStyle(DB.accent)
+                    Text(RoomPlanController.isSupported ? "2~3분 · 실측 치수와 벽 · 문 · 창 구조까지 저장돼요"
+                                                        : "2~3분 · LiDAR 가 없는 기기라 사진과 카메라 위치만 저장돼요")
+                        .font(.caption).foregroundStyle(DB.sub).multilineTextAlignment(.center)
+                }
+                .padding(.vertical, 24)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity)
+                .background(DB.accentSoft.opacity(0.6), in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(DB.accent.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // 촬영 화면 시작 전 안내와 같은 세 가지 (예전 6줄 안내 대신 · 나머지는 촬영 화면 안내가 맡는다)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(PreScanChecklist.items(for: .room)) { item in
+                    HStack(spacing: 10) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(DB.accent)
+                            .frame(width: 34, height: 34)
+                            .background(DB.accentSoft, in: RoundedRectangle(cornerRadius: 10))
+                        Text(item.text).font(.subheadline.weight(.medium)).foregroundStyle(DB.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
     }
 
@@ -277,9 +496,7 @@ struct ListingRegisterView: View {
 
     @ViewBuilder private var imagePanel: some View {
         VStack(alignment: .leading, spacing: 6) {
-            tip("방 전체 구조가 보이는 사진을 먼저 선택해 주세요.")
-            tip("창가, 주방, 욕실 입구처럼 생활 동선이 드러나는 사진을 함께 올리면 좋아요.")
-            tip("어둡거나 흔들린 사진은 제외하고, 같은 방향의 중복 사진은 줄여주세요.")
+            tip("방 전체가 보이는 사진을 먼저 골라 주세요. 고른 순서대로 상세 화면에 보여요.")
         }
         PhotosPicker(selection: $pickerItems, maxSelectionCount: AppConfig.shared.maxListingPhotos,
                      selectionBehavior: .ordered, matching: .images) {
@@ -392,7 +609,7 @@ struct ListingRegisterView: View {
 
     private func dashedBox(title: String, message: String, icon: String) -> some View {
         VStack(spacing: 8) {
-            Image(systemName: icon).font(.title2).foregroundStyle(DB.purple)
+            Image(systemName: icon).font(.title2).foregroundStyle(DB.accent)
             Text(title).font(.subheadline.weight(.bold)).foregroundStyle(DB.ink)
             Text(message).font(.caption).foregroundStyle(DB.sub).multilineTextAlignment(.center)
         }
@@ -404,26 +621,60 @@ struct ListingRegisterView: View {
         .contentShape(Rectangle())
     }
 
-    private var submitBar: some View {
+    /// 아래 버튼: [이전] [다음] · 마지막 단계는 [이전] [매물 등록하기] (업로드 중이면 진행률)
+    private var bottomBar: some View {
         VStack(spacing: 6) {
             if let stage {
                 HStack(spacing: 8) {
                     if let progress { ProgressView(value: progress).frame(width: 120) } else { ProgressView() }
                     Text(stage + (progress.map { " \(Int($0 * 100))%" } ?? "")).font(.caption).foregroundStyle(DB.sub)
                 }
+            } else if let stepHint {
+                Label(stepHint, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DB.danger)
             }
-            Button {
-                Task { await submit() }
-            } label: {
-                Text(isSubmitting ? "등록 중…" : (createdId == nil ? "매물 등록하기" : "이어서 등록하기"))
+            HStack(spacing: 10) {
+                if step != .basics {
+                    Button("이전") { go(to: Step(rawValue: step.rawValue - 1) ?? .basics) }
+                        .buttonStyle(.dbSecondary)
+                        .frame(width: 100)
+                        .disabled(isSubmitting)
+                }
+                if step == .review {
+                    Button {
+                        Task { await submit() }
+                    } label: {
+                        Text(isSubmitting ? "등록 중…" : (createdId == nil ? "매물 등록하기" : "이어서 등록하기"))
+                    }
+                    .buttonStyle(.dbPrimary)
+                    .disabled(!canSubmit)
+                } else {
+                    Button(step == .media ? "다음 · 확인하기" : "다음") { next() }
+                        .buttonStyle(.dbPrimary)
+                }
             }
-            .buttonStyle(.dbPrimary)
-            .disabled(!canSubmit)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 8)
         .background(Color.white)
     }
+
+    /// 지금 단계에서 꼭 필요한 칸을 확인하고 다음 단계로
+    private func next() {
+        if let p = Self.problem(for: step, address: address, dealType: dealType, deposit: deposit, monthly: monthly,
+                                area: areaText) {
+            stepHint = p
+            return
+        }
+        go(to: Step(rawValue: step.rawValue + 1) ?? .review)
+    }
+
+    private func go(to s: Step) {
+        stepHint = nil
+        withAnimation(.easeInOut(duration: 0.2)) { step = s }
+    }
+
 
     // MARK: - 제출
 

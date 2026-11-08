@@ -1,40 +1,37 @@
 import SwiftUI
 
-// StayView 데모 화면의 디자인 토큰과 공용 컴포넌트.
-// 흰 배경 · 보라 포인트 · 연회색 입력칸/카드 · 굵은 한글 제목.
+// 디자인 토큰과 공용 컴포넌트 (처음엔 StayView 데모 화면을 따랐고, 색은 둘러방 아이콘 · 지도에 맞춰 바꿈).
+// 흰 배경 · 세이지 그린 포인트 · 따뜻한 베이지 회색 입력칸/선 · 굵은 한글 제목.
 
 extension Color {
     init(rgb r: Double, _ g: Double, _ b: Double) { self.init(red: r / 255, green: g / 255, blue: b / 255) }
 }
 
 enum DB {
-    static let purple = Color(rgb: 108, 77, 246)
-    static let purpleSoft = Color(rgb: 243, 240, 255)
-    static let purpleLine = Color(rgb: 221, 214, 255)
+    static let accent = Color(rgb: 87, 128, 73)          // #578049 세이지 그린 — 버튼 · 선택 · 3D 표시 · 지도 핀 (흰 글자 대비 4.6:1)
+    static let accentSoft = Color(rgb: 237, 244, 233)    // #EDF4E9 연한 초록 바탕 (배너 · 태그 · 보조 버튼)
+    static let accentLine = Color(rgb: 210, 228, 201)    // #D2E4C9 연한 초록 테두리
     static let ink = Color(rgb: 28, 28, 30)
-    static let sub = Color(rgb: 134, 134, 140)
-    static let faint = Color(rgb: 178, 178, 184)
-    static let field = Color(rgb: 242, 242, 244)
-    static let group = Color(rgb: 247, 247, 249)
-    static let line = Color(rgb: 232, 232, 236)
+    static let sub = Color(rgb: 138, 132, 122)           // #8A847A 따뜻한 회색 보조 글자
+    static let faint = Color(rgb: 179, 173, 163)         // #B3ADA3
+    static let field = Color(rgb: 243, 240, 234)         // #F3F0EA 입력칸 (베이지 회색)
+    static let group = Color(rgb: 248, 246, 242)         // #F8F6F2 묶음 바탕
+    static let line = Color(rgb: 236, 231, 223)          // #ECE7DF 선
     static let danger = Color(rgb: 232, 72, 85)
     static let kakao = Color(rgb: 254, 229, 0)
-    static let logo = Color(rgb: 196, 196, 202)
+    static let logo = Color(rgb: 207, 200, 188)          // 예전 타일 로고용 (지금 로고는 LogoMark)
 }
 
 // MARK: - 로고 · 검색
 
-/// 2×2 타일 + 앱 이름 (StayView 로고 형태)
+/// 앱 아이콘과 같은 마크(회색빛 베이지 타일) + 앱 이름
 struct LogoView: View {
     var size: CGFloat = 22
-    var color: Color = DB.logo
+    var color: Color = DB.ink
 
     var body: some View {
-        HStack(spacing: size * 0.35) {
-            VStack(spacing: size * 0.12) {
-                HStack(spacing: size * 0.12) { tile; tile }
-                HStack(spacing: size * 0.12) { tile; tile }
-            }
+        HStack(spacing: size * 0.32) {
+            LogoMark().frame(width: size * 1.3, height: size * 1.3)
             Text(AppConfig.shared.brandName)
                 .font(.system(size: size, weight: .heavy))
                 .foregroundStyle(color)
@@ -42,10 +39,65 @@ struct LogoView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(AppConfig.shared.brandName)
     }
+}
 
-    private var tile: some View {
-        RoundedRectangle(cornerRadius: size * 0.1).fill(color).frame(width: size * 0.44, height: size * 0.44)
+/// 둘러방 마크 = 앱 아이콘(Assets › AppIcon)과 같은 그림.
+/// 회색빛 베이지 타일 위에, 처음 방 큐브에 천장을 덮어 왼쪽 벽 · 천장 · 바닥이 ‘ㄷ’ 으로 이어진 흰 방 (안쪽 벽은 진한 베이지).
+/// 100×100 칸 좌표. tile = false 면 타일 없이 방만 그린다(진한 바탕 위에 올릴 때).
+struct LogoMark: View {
+    var tile = true
+
+    var body: some View {
+        Canvas { ctx, size in
+            let s = min(size.width, size.height) / 100
+            let ox = (size.width - 100 * s) / 2, oy = (size.height - 100 * s) / 2
+            if tile {
+                let rect = CGRect(x: ox, y: oy, width: 100 * s, height: 100 * s)
+                let shape = Path(roundedRect: rect, cornerRadius: 22.37 * s, style: .continuous)
+                ctx.fill(shape, with: .linearGradient(Gradient(colors: [Self.color(0xECE7DF), Self.color(0xDDD6CA)]),
+                                                      startPoint: rect.origin, endPoint: CGPoint(x: rect.maxX, y: rect.maxY)))
+            }
+            for face in Self.faces {
+                var path = Path()
+                path.addLines(stride(from: 0, to: face.xy.count, by: 2).map {
+                    CGPoint(x: ox + face.xy[$0] * s, y: oy + face.xy[$0 + 1] * s)
+                })
+                path.closeSubpath()
+                let color = Self.color(face.rgb)
+                ctx.fill(path, with: .color(color))
+                ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 0.3 * s, lineJoin: .round))   // 면 사이 실금 가리기
+            }
+        }
+        .accessibilityHidden(true)
     }
+
+    private struct Face {
+        let rgb: UInt32; let xy: [CGFloat]
+        init(_ rgb: UInt32, _ xy: [CGFloat]) { self.rgb = rgb; self.xy = xy }
+    }
+
+    private static func color(_ hex: UInt32) -> Color {
+        Color(rgb: Double(hex >> 16 & 0xFF), Double(hex >> 8 & 0xFF), Double(hex & 0xFF))
+    }
+
+    /// 뒤에서 앞으로 그리는 순서
+    private static let faces: [Face] = [
+        Face(0xBEB19B, [50, 52.81, 79.45, 67.53, 79.45, 36.3, 50, 21.58]),   // 뒷벽 (ㄷ 안쪽)
+        Face(0xF7F4EE, [64.72, 53.3, 75.32, 58.6, 75.32, 49.23, 64.72, 43.93]),   // 창
+        Face(0xFFFFFF, [20.55, 67.53, 50, 52.81, 50, 21.58, 20.55, 36.3]),   // 왼쪽 벽
+        Face(0xF8F6F1, [20.55, 67.53, 50, 52.81, 79.45, 67.53, 50, 82.25]),   // 바닥
+        Face(0xE2B22A, [28.8, 64.58, 39.4, 69.88, 39.4, 63.64, 28.8, 58.34]),   // 침대 옆
+        Face(0xC99A17, [39.4, 69.88, 54.12, 62.52, 54.12, 56.28, 39.4, 63.64]),   // 침대 앞
+        Face(0xFFD84D, [28.8, 58.34, 43.52, 50.98, 54.12, 56.28, 39.4, 63.64]),   // 침대 위
+        Face(0xFFFFFF, [39.99, 53.6, 43.52, 51.83, 52.36, 56.25, 48.82, 58.01]),   // 베개
+        Face(0xEDE8DF, [16.73, 69.36, 50, 86, 50, 82.25, 16.73, 65.62]),   // 바닥 두께 (왼쪽 앞)
+        Face(0xD4CBBB, [50, 86, 83.27, 69.36, 83.27, 65.62, 50, 82.25]),   // 바닥 두께 (오른쪽 앞)
+        Face(0xEDE8DF, [16.73, 65.62, 20.55, 67.53, 20.55, 36.3, 16.73, 34.38]),   // 왼쪽 벽 끝
+        Face(0xAC9D84, [79.45, 67.53, 83.27, 65.62, 83.27, 34.38, 79.45, 36.3]),   // 뒷벽 끝
+        Face(0xEDE8DF, [16.73, 34.38, 50, 51.02, 50, 47.27, 16.73, 30.64]),   // 천장 두께 (왼쪽 앞)
+        Face(0xD4CBBB, [50, 51.02, 83.27, 34.38, 83.27, 30.64, 50, 47.27]),   // 천장 두께 (오른쪽 앞)
+        Face(0xFFFFFF, [16.73, 30.64, 50, 14, 83.27, 30.64, 50, 47.27]),   // 천장
+    ]
 }
 
 struct SearchField: View {
@@ -76,7 +128,7 @@ struct SearchField: View {
 
 // MARK: - 버튼
 
-/// 보라색 큰 버튼 ("채팅하기", "매물 등록하기", "인증 완료하기")
+/// 초록 큰 버튼 ("채팅하기", "매물 등록하기", "인증 완료하기")
 struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
@@ -85,25 +137,25 @@ struct PrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.white)
             .frame(maxWidth: .infinity)
             .frame(height: 52)
-            .background(DB.purple.opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.35),
+            .background(DB.accent.opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.35),
                         in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
-/// 연보라 보조 버튼 ("입주 예상 공간", "내 가구 놓아보기")
+/// 연한 초록 보조 버튼 ("입주 예상 공간", "내 가구 놓아보기")
 struct SecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.bold))
-            .foregroundStyle(DB.purple.opacity(isEnabled ? 1 : 0.4))
+            .foregroundStyle(DB.accent.opacity(isEnabled ? 1 : 0.4))
             .frame(maxWidth: .infinity)
             .frame(height: 46)
-            .background(DB.purpleSoft.opacity(configuration.isPressed ? 0.7 : 1), in: RoundedRectangle(cornerRadius: 12))
+            .background(DB.accentSoft.opacity(configuration.isPressed ? 0.7 : 1), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
-/// 작은 알약 버튼. filled = 보라("매물 등록"), dark = 3D 뷰어 헤더("초기화", "평면뷰"), 기본 = 회색("전체 선택")
+/// 작은 알약 버튼. filled = 초록("매물 등록"), dark = 3D 뷰어 헤더("초기화", "평면뷰"), 기본 = 회색("전체 선택")
 struct PillButtonStyle: ButtonStyle {
     var filled = false
     var dark = false
@@ -117,7 +169,7 @@ struct PillButtonStyle: ButtonStyle {
             .background(background, in: Capsule())
             .opacity(configuration.isPressed ? 0.75 : 1)
     }
-    private var background: Color { filled ? DB.purple : (dark ? Color.white.opacity(0.16) : DB.field) }
+    private var background: Color { filled ? DB.accent : (dark ? Color.white.opacity(0.16) : DB.field) }
 }
 
 extension ButtonStyle where Self == PrimaryButtonStyle {
@@ -235,7 +287,7 @@ struct CheckRow: View {
             HStack(spacing: 10) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
                     .font(.title3)
-                    .foregroundStyle(checked ? DB.purple : DB.faint)
+                    .foregroundStyle(checked ? DB.accent : DB.faint)
                 Text(label)
                     .font(bold ? Font.body.weight(.bold) : Font.subheadline)
                     .foregroundStyle(DB.ink)
@@ -301,7 +353,7 @@ struct InfoRow: View {
     }
 }
 
-/// 옵션 표시용 연보라 태그
+/// 옵션 표시용 연한 초록 태그
 struct OptionTag: View {
     let label: String
     var body: some View {
@@ -309,8 +361,8 @@ struct OptionTag: View {
             .font(.caption.weight(.semibold))
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .foregroundStyle(DB.purple)
-            .background(DB.purpleSoft, in: Capsule())
+            .foregroundStyle(DB.accent)
+            .background(DB.accentSoft, in: Capsule())
     }
 }
 
@@ -427,23 +479,27 @@ struct DemoBadge: View {
     var body: some View {
         Text("데모")
             .font(.caption2.weight(.bold))
-            .foregroundStyle(DB.purple)
+            .foregroundStyle(DB.accent)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(DB.purpleSoft, in: Capsule())
-            .overlay(Capsule().stroke(DB.purpleLine))
+            .background(DB.accentSoft, in: Capsule())
+            .overlay(Capsule().stroke(DB.accentLine))
     }
 }
 
-/// 3D 공간이 준비된 매물 표시
+/// 3D 공간이 준비된 매물 표시 (카드 · 목록 · 지도 · 채팅에서 같은 모양: 큐브 + "3D")
 struct ThreeDBadge: View {
     var body: some View {
-        Text("3D")
-            .font(.system(size: 10, weight: .heavy))
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(DB.purple, in: Capsule())
+        HStack(spacing: 2) {
+            Image(systemName: "cube.fill").font(.system(size: 8, weight: .bold))
+            Text("3D").font(.system(size: 10, weight: .heavy))
+        }
+        .foregroundStyle(Color.white)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(DB.accent, in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("3D 공간 있음")
     }
 }
 
@@ -454,26 +510,27 @@ struct VerifiedBrokerBadge: View {
         if compact {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Color.white, DB.purple)
+                .foregroundStyle(Color.white, DB.accent)
                 .padding(3)
                 .background(Color.white, in: Circle())
                 .accessibilityLabel("인증 중개사")
         } else {
             Label("인증 중개사", systemImage: "checkmark.seal.fill")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(DB.purple)
+                .foregroundStyle(DB.accent)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(DB.purpleSoft, in: Capsule())
+                .background(DB.accentSoft, in: Capsule())
         }
     }
 }
 
-/// 관심 매물 하트. framed = 상세 화면 하단의 네모 버튼
+/// 관심 매물 하트. framed = 상세 화면 하단의 네모 버튼, onPhoto = 사진 위 (안 눌렸으면 흰 하트 + 그림자)
 struct HeartButton: View {
     let listingId: String
     var size: CGFloat = 22
     var framed = false
+    var onPhoto = false
     @EnvironmentObject private var session: Session
 
     var body: some View {
@@ -482,8 +539,9 @@ struct HeartButton: View {
             Task { await session.toggleFavorite(listingId) }
         } label: {
             Image(systemName: on ? "heart.fill" : "heart")
-                .font(.system(size: size))
-                .foregroundStyle(DB.danger)
+                .font(.system(size: size, weight: onPhoto ? .semibold : .regular))
+                .foregroundStyle(onPhoto && !on ? Color.white : DB.danger)
+                .shadow(color: onPhoto ? Color.black.opacity(0.4) : Color.clear, radius: 2, y: 1)
                 .frame(width: framed ? 54 : 36, height: framed ? 54 : 36)
                 .background {
                     if framed {
@@ -498,25 +556,58 @@ struct HeartButton: View {
     }
 }
 
-/// 홈 3열 격자 카드: 사진 · "월세 1000/57" · "원룸" · "4층, 관리비 6만"
+/// 홈 2열 카드: 큰 사진(3D 표시) · "월세 1000/57" · "원룸 · 7평 · 4층" · "관리비 7만 · 흑석동". ♡ 는 ListingTile 이 사진 위에 얹는다
 struct ListingCard: View {
     let listing: Listing
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             RemoteImage(uri: listing.coverUri, placeholderIcon: "house")
-                .aspectRatio(1, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .aspectRatio(4 / 3, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .topLeading) {
+                    if listing.isSpaceReady { ThreeDBadge().padding(7) }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if listing.agent?.isVerified == true { VerifiedBrokerBadge(compact: true).padding(6) }
+                }
+                .padding(.bottom, 6)
+            Text(Fmt.price(listing)).font(.callout.weight(.heavy)).foregroundStyle(DB.ink).lineLimit(1)
+            Text(Fmt.cardFacts(listing).ifEmpty(" ")).font(.footnote).foregroundStyle(DB.ink).lineLimit(1)
+            Text(Fmt.cardSub(listing)).font(.caption).foregroundStyle(DB.sub).lineLimit(1)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+/// 카드 + 사진 위 ♡. ♡ 는 NavigationLink 밖(겹쳐 놓기)이라 누르면 저장만 되고 상세로 넘어가지 않는다
+struct ListingTile: View {
+    let listing: Listing
+    var body: some View {
+        NavigationLink(value: AppRoute.listing(listing.listingId)) { ListingCard(listing: listing) }
+            .buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) {
+                HeartButton(listingId: listing.listingId, size: 20, onPhoto: true).padding(2)
+            }
+    }
+}
+
+/// 최근 본 매물 (옆으로 넘기는 한 줄): 작은 사진 · "500/31" · "상도동 · 원룸"
+struct ListingMiniCard: View {
+    let listing: Listing
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            RemoteImage(uri: listing.coverUri, placeholderIcon: "house")
+                .frame(width: 128, height: 88)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(alignment: .topLeading) {
                     if listing.isSpaceReady { ThreeDBadge().padding(5) }
                 }
-                .overlay(alignment: .topTrailing) {
-                    if listing.agent?.isVerified == true { VerifiedBrokerBadge(compact: true).padding(4) }
-                }
-                .padding(.bottom, 5)
-            Text(Fmt.price(listing)).font(.footnote.weight(.bold)).foregroundStyle(DB.ink).lineLimit(1)
-            Text(Fmt.roomType(listing.roomType).ifEmpty(" ")).font(.caption).foregroundStyle(DB.ink).lineLimit(1)
-            Text(Fmt.cardDetail(listing)).font(.caption2).foregroundStyle(DB.sub).lineLimit(1)
+                .padding(.bottom, 4)
+            Text(Fmt.priceShort(listing)).font(.footnote.weight(.heavy)).foregroundStyle(DB.ink).lineLimit(1)
+            Text([Fmt.dong(listing.location), Fmt.roomType(listing.roomType)].filter { !$0.isEmpty }.joined(separator: " · ").ifEmpty(" "))
+                .font(.caption2).foregroundStyle(DB.sub).lineLimit(1)
         }
+        .frame(width: 128, alignment: .leading)
         .contentShape(Rectangle())
     }
 }
@@ -537,11 +628,11 @@ struct ListingRow: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(Fmt.priceShort(listing)).font(.headline.weight(.bold)).foregroundStyle(DB.ink)
                         HStack(spacing: 6) {
-                            Text([Fmt.dealLabel(listing), Fmt.roomType(listing.roomType)].filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.caption.weight(.medium)).foregroundStyle(DB.ink)
+                            Text([Fmt.dealLabel(listing), Fmt.cardFacts(listing)].filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.caption.weight(.medium)).foregroundStyle(DB.ink).lineLimit(1)
                             if listing.agent?.isVerified == true { VerifiedBrokerBadge() }
                         }
-                        Text(Fmt.cardDetail(listing)).font(.caption).foregroundStyle(DB.sub).lineLimit(1)
+                        Text(Fmt.cardSub(listing)).font(.caption).foregroundStyle(DB.sub).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
@@ -692,5 +783,89 @@ extension Error {
         @unknown default:
             return "\(e)"
         }
+    }
+}
+
+// MARK: - 빠른 필터 · 가구 비교 바로가기 (앱 화면 개선)
+
+/// 검색창 아래 · 지도 위의 빠른 필터 한 줄: 3D로 보기 · 월세 · 전세 · 방 종류 (한 번 더 누르면 해제).
+/// 보증금 · 월세 상한은 필터 시트에서. floating = 지도 위 (칩마다 그림자)
+struct QuickFilterBar: View {
+    @Binding var query: ListingQuery
+    var floating = false
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                chip("3D로 보기", icon: "cube.fill", on: query.spaceOnly) { query.spaceOnly.toggle() }
+                chip("월세", on: query.dealType == "MONTHLY") {
+                    query.dealType = query.dealType == "MONTHLY" ? nil : "MONTHLY"
+                }
+                chip("전세", on: query.dealType == "JEONSE") {
+                    if query.dealType == "JEONSE" {
+                        query.dealType = nil
+                    } else {
+                        query.dealType = "JEONSE"
+                        query.maxMonthly = nil
+                    }
+                }
+                ForEach(Fmt.roomTypes.indices, id: \.self) { i in
+                    let key = Fmt.roomTypes[i].key
+                    chip(Fmt.roomTypes[i].label, on: query.roomType == key) {
+                        query.roomType = query.roomType == key ? nil : key
+                    }
+                }
+            }
+            .padding(.horizontal, floating ? 16 : 20)
+            .padding(.vertical, floating ? 6 : 1)
+        }
+    }
+
+    private func chip(_ label: String, icon: String? = nil, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let icon { Image(systemName: icon).font(.system(size: 11, weight: .bold)) }
+                Text(label)
+            }
+            .font(.subheadline.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 13)
+            .frame(height: 34)
+            .foregroundStyle(on ? Color.white : DB.ink)
+            .background(on ? DB.accent : Color.white, in: Capsule())
+            .overlay(Capsule().stroke(on ? Color.clear : DB.line))
+            .shadow(color: floating ? Color.black.opacity(0.12) : Color.clear, radius: 4, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// "내 가구가 들어가는 방 찾기" 바로가기 (홈 · 마이페이지) → 가구로 매물 비교
+struct CompareBanner: View {
+    var title = "내 침대 · 책상이 들어가는 방만 보기"
+    var subtitle = "촬영해 둔 내 가구로 3D 매물을 자동으로 비교해요"
+
+    var body: some View {
+        NavigationLink(value: AppRoute.compare([])) {
+            HStack(spacing: 12) {
+                Image(systemName: "sofa")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 40, height: 40)
+                    .background(DB.accent, in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.bold)).foregroundStyle(DB.ink)
+                    Text(subtitle).font(.caption).foregroundStyle(DB.sub)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(DB.accent)
+            }
+            .padding(12)
+            .background(DB.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DB.accentLine))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

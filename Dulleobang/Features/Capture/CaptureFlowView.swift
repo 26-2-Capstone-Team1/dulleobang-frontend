@@ -30,6 +30,12 @@ struct CaptureFlowView: View {
                 if model.phase == .recording, !model.stats.furniture.isEmpty {
                     FurnitureChecklist(chips: model.stats.furniture)
                 }
+                if model.phase == .recording, let map = model.stats.coverageMap {      // 덜 찍힌 곳 미니맵 (오른쪽 위)
+                    HStack {
+                        Spacer()
+                        CoverageMiniMap(map: map, share: model.stats.surfaceCoverage)
+                    }
+                }
                 Spacer()
                 if model.phase == .ready || model.phase == .recording { controls }
             }
@@ -82,7 +88,18 @@ struct CaptureFlowView: View {
             Text(title).font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 12).padding(.vertical, 6).background(.ultraThinMaterial, in: Capsule())
             Spacer()
-            Color.clear.frame(width: 40, height: 40)
+            if model.phase == .recording, model.stats.torchAvailable {     // 손전등 (어두우면 앱이 켬 · 눌러서 켜고 끔)
+                Button { model.toggleTorch() } label: {
+                    Image(systemName: model.stats.torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                        .font(.headline)
+                        .foregroundStyle(model.stats.torchOn ? Color.yellow : Color.primary)
+                        .frame(width: 40, height: 40)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .accessibilityLabel(model.stats.torchOn ? "손전등 끄기" : "손전등 켜기")
+            } else {
+                Color.clear.frame(width: 40, height: 40)
+            }
         }
     }
 
@@ -98,10 +115,15 @@ struct CaptureFlowView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            Text(model.phase == .ready ? readyHint : model.stats.hint)
-                .font(.callout).multilineTextAlignment(.center)
-                .padding(12).frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            if model.phase == .ready { PreScanChecklist(kind: model.kind) }   // 촬영 전 확인 (시작 전 화면만)
+            if model.phase == .recording, let gap = model.stats.coverageGap {
+                CoverageGapBanner(info: gap)                                 // 덜 찍힌 곳: 화살표 + 한 줄 (미니맵의 주황색 동그라미 쪽)
+            } else {
+                Text(model.phase == .ready ? readyHint : model.stats.hint)
+                    .font(.callout).multilineTextAlignment(.center)
+                    .padding(12).frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
 
             if model.phase == .recording {
                 HStack(spacing: 16) {
@@ -115,9 +137,20 @@ struct CaptureFlowView: View {
                     } else {
                         Label(model.stats.hasDepth ? "깊이 ✓" : "깊이 없음", systemImage: "sensor.tag.radiowaves.forward")
                     }
+                    if let ceiling = model.stats.ceilingCoverage {            // 첫 바퀴를 마친 뒤부터 (LiDAR 기기만)
+                        Label("천장 \(Int((ceiling * 100).rounded()))%", systemImage: "square.tophalf.filled")
+                            .foregroundStyle(model.stats.ceilingLow ? Color.orange : Color.primary)
+                            .accessibilityLabel("걸어온 길 위의 천장을 찍은 곳 \(Int((ceiling * 100).rounded()))퍼센트")
+                    }
+                    if let surface = model.stats.surfaceCoverage {                // 벽 · 바닥 중 사진 3장 이상에 나온 곳 (RoomPlan)
+                        Label("전체 \(Int((surface * 100).rounded()))%", systemImage: "square.grid.3x3")
+                            .foregroundStyle(model.stats.surfaceLow ? Color.orange : Color.primary)
+                            .accessibilityLabel("벽과 바닥 중 사진 세 장 이상에 나온 곳 \(Int((surface * 100).rounded()))퍼센트")
+                    }
                     Circle().fill(trackingColor).frame(width: 10, height: 10)
                 }
                 .font(.caption.monospacedDigit())
+                .lineLimit(1).minimumScaleFactor(0.75)                         // 항목이 늘어도 좁은 화면에서 줄바꿈 없이 줄어들게
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(.ultraThinMaterial, in: Capsule())
             }
@@ -148,9 +181,9 @@ struct CaptureFlowView: View {
         switch model.kind {
         case .room:
             return model.useRoomPlan
-                ? "방 입구에서 시작해 벽을 따라 걸으면서 천천히 한 바퀴 돈 뒤,\n폰을 아래로 기울여 바닥이 보이게 한 바퀴 더 도세요. 다른 사람은 잠시 방 밖으로!\n"
+                ? "방을 천천히 한 바퀴 걸으며 찍어 주세요. 나머지는 화면 안내를 따르면 돼요.\n"
                     + "가구는 하나씩 전체가 한 화면에 들어오게도 찍어 주세요 (위 목록이 ✓ 로 바뀌어요)"
-                : "방 입구에서 시작해 벽을 따라 걸으면서 천천히 한 바퀴 도세요.\n창문·문·구석이 모두 보이게 찍고, 제자리에서 돌리기만 하지는 마세요."
+                : "방을 천천히 한 바퀴 걸으며 찍어 주세요.\n창문·문·구석이 모두 보이게, 나머지는 화면 안내를 따르면 돼요."
         case .furniture:
             return "가구 전체가 화면에 들어오게 1~2 m 떨어져서\n가구 주위를 천천히 한 바퀴 도세요."
         }
@@ -193,7 +226,7 @@ struct CaptureFlowView: View {
             })
         case .captured(let c):
             content = AnyView(VStack(spacing: 12) {
-                Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundStyle(DB.purple)
+                Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundStyle(DB.accent)
                 Text("촬영을 마쳤습니다").font(.headline)
                 Text("\(c.frameCount)장 · \(String(format: "%.0f", c.sizeMB)) MB\n깊이 \(c.hasDepth ? "✓" : "없음") · 방 구조 \(c.hasRoomPlan ? "✓" : "없음")")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -270,7 +303,7 @@ private struct CaptureAlertBanner: View {
     }
 }
 
-/// 화면 위 가구 목록: RoomPlan 이 찾은 가구마다 전체 사진 여부. 초록 ✓ = 전체 사진 있음, 민트 ✓ = 같은 모양 가구의 사진으로 대신, 회색 = 아직
+/// 화면 위 가구 목록: RoomPlan 이 찾은 가구마다 전체 사진 여부. 초록 ✓ = 전체 사진 있음 (뒤의 숫자 = 서로 다른 방향 수), 민트 ✓ = 같은 모양 가구의 사진으로 대신, 회색 = 아직
 private struct FurnitureChecklist: View {
     let chips: [FurnitureChip]
 
@@ -289,13 +322,17 @@ private struct FurnitureChecklist: View {
                         Image(systemName: chip.symbol)
                         Text(chip.label)
                         Image(systemName: icon(chip.state)).foregroundStyle(color(chip.state))
+                        if chip.state == .done, chip.views > 0 {
+                            Text("\(chip.views)방향").font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.secondary)
+                        }
                     }
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.ultraThinMaterial, in: Capsule())
                     .opacity(chip.state == .pending ? 0.8 : 1)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(chip.label), \(spoken(chip.state))")
+                    .accessibilityLabel("\(chip.label), \(spoken(chip.state))"
+                        + (chip.state == .done && chip.views > 0 ? ", \(chip.views)방향에서 찍음" : ""))
                 }
             }
             .padding(.horizontal, 2)
@@ -328,7 +365,7 @@ private struct FurnitureChecklist: View {
     }
 }
 
-/// 첫 바퀴 뒤 '아직 전체 사진이 없는 가구' 안내 띠 (보라). 촬영 경고 띠가 떠 있으면 경고가 먼저다
+/// 첫 바퀴 뒤 '아직 전체 사진이 없는 가구' 안내 띠 (초록). 촬영 경고 띠가 떠 있으면 경고가 먼저다
 private struct FurnitureTipBanner: View {
     let tip: FurnitureTip
 
@@ -346,7 +383,7 @@ private struct FurnitureTipBanner: View {
         .foregroundStyle(.white)
         .padding(14)
         .frame(maxWidth: .infinity)
-        .background(DB.purple.opacity(0.92), in: RoundedRectangle(cornerRadius: 14))
+        .background(DB.accent.opacity(0.92), in: RoundedRectangle(cornerRadius: 14))
         .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
         .accessibilityElement(children: .combine)
     }
@@ -362,9 +399,7 @@ private struct WideShotScreen: View {
     let onSkipAll: () -> Void
 
     private var guide: String {
-        step.problem == ShotCheck.Problem.blocked.rawValue
-            ? "가리는 것이 없는 쪽으로 가까이 가서, \(step.label) 전체가 화면 안에 들어오게 찍어 주세요"
-            : "벽 쪽으로 최대한 물러나 \(Josa.eulReul(step.label)) 화면 가운데에 두고, 전체가 다 들어오게 찍어 주세요"
+        "벽 쪽으로 최대한 물러나 \(Josa.eulReul(step.label)) 화면 가운데에 두고, 전체가 다 들어오게 찍어 주세요"
     }
 
     var body: some View {
@@ -382,7 +417,7 @@ private struct WideShotScreen: View {
                 .foregroundStyle(.white)
                 .padding(14)
                 .frame(maxWidth: .infinity)
-                .background(DB.purple.opacity(0.92), in: RoundedRectangle(cornerRadius: 14))
+                .background(DB.accent.opacity(0.92), in: RoundedRectangle(cornerRadius: 14))
                 .padding(.top, 56)                                        // 위쪽 닫기 버튼 · 제목 아래
                 Spacer()
                 HStack {
@@ -408,5 +443,137 @@ private struct WideShotScreen: View {
             }
             .padding(.horizontal)
         }
+    }
+}
+
+/// 촬영 전 확인 (시작 전 화면에만). 찍는 사람에게는 두세 가지만 부탁하고 나머지(초점 · 저장 · 흔들림 · 덜 찍힌 곳)는 앱 · 서버가 맡는다 (AI 팀과 합의)
+struct PreScanChecklist: View {
+    struct Item: Identifiable {
+        let icon: String
+        let text: String
+        var id: String { text }
+    }
+
+    let kind: CaptureKind
+
+    static func items(for kind: CaptureKind) -> [Item] {
+        switch kind {
+        case .room:
+            return [Item(icon: "figure.walk", text: "방 전체를 천천히 한 바퀴 · 욕실 · 주방 같은 좁은 곳도 한 번씩 들어가기"),
+                    Item(icon: "person.fill.xmark", text: "다른 사람은 화면 밖으로"),
+                    Item(icon: "lightbulb.fill", text: "(가능하면) 불 켜기")]
+        case .furniture:
+            return [Item(icon: "figure.walk", text: "가구 주위를 천천히 한 바퀴"),
+                    Item(icon: "person.fill.xmark", text: "사람 · 물건이 가구 앞을 가리지 않게"),
+                    Item(icon: "lightbulb.fill", text: "(가능하면) 불 켜기")]
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("촬영 전 확인").font(.caption.weight(.semibold))
+            ForEach(Self.items(for: kind)) { item in
+                Label(item.text, systemImage: item.icon).font(.caption)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// 덜 찍힌 곳 미니맵 (방 촬영 · RoomPlan): 벽을 초록(사진 3장 이상) · 노랑 · 주황(덜 찍힘)으로, 파란 점 = 내 위치(위쪽이 바라보는 방향),
+/// 주황 동그라미 = 지금 안내하는 가장 덜 찍힌 곳. 바라보는 방향이 위로 오게 돌려 '오른쪽 벽' 안내와 화면 방향이 같다 (magicplan 의 초록/주황 벽 참고)
+private struct CoverageMiniMap: View {
+    let map: CoverageMap
+    let share: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("촬영 지도").font(.caption2.weight(.bold))
+                Spacer(minLength: 4)
+                if let share {
+                    Text("\(Int((share * 100).rounded()))%").font(.caption2.weight(.bold).monospacedDigit())
+                }
+            }
+            Canvas { context, size in draw(&context, size: size) }
+                .frame(width: 124, height: 124)
+        }
+        .padding(8)
+        .frame(width: 140)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenLabel)
+    }
+
+    private var spokenLabel: String {
+        var text = "촬영 지도"
+        if let share { text += ", 벽과 바닥 \(Int((share * 100).rounded()))퍼센트 찍힘" }
+        if map.gap != nil { text += ", 주황색 동그라미 쪽이 덜 찍힌 곳" }
+        return text
+    }
+
+    private func draw(_ context: inout GraphicsContext, size: CGSize) {
+        let project = map.projector(size: size, padding: 10)
+        if map.floor.count >= 3 {
+            var floor = Path()
+            floor.addLines(map.floor.map(project))
+            floor.closeSubpath()
+            context.fill(floor, with: .color(.white.opacity(0.12)))
+        }
+        for point in map.floorGaps {
+            let c = project(point)
+            context.fill(Path(ellipseIn: CGRect(x: c.x - 1.5, y: c.y - 1.5, width: 3, height: 3)), with: .color(.orange))
+        }
+        for piece in map.pieces {
+            var line = Path()
+            line.move(to: project(piece.a))
+            line.addLine(to: project(piece.b))
+            let color: Color = piece.covered >= 0.8 ? .green : (piece.covered >= 0.4 ? .yellow : .orange)
+            context.stroke(line, with: .color(color), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+        }
+        let me = project(map.camera)
+        if let gap = map.gap {
+            let g = project(gap)
+            var path = Path()
+            path.move(to: me)
+            path.addLine(to: g)
+            context.stroke(path, with: .color(.white.opacity(0.8)), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+            context.stroke(Path(ellipseIn: CGRect(x: g.x - 8, y: g.y - 8, width: 16, height: 16)), with: .color(.orange), lineWidth: 2.5)
+        }
+        var cone = Path()                                                   // 바라보는 방향 (지도에서는 늘 위쪽)
+        cone.addLines([me, CGPoint(x: me.x - 11, y: me.y - 22), CGPoint(x: me.x + 11, y: me.y - 22)])
+        cone.closeSubpath()
+        context.fill(cone, with: .color(.blue.opacity(0.35)))
+        let dot = Path(ellipseIn: CGRect(x: me.x - 5, y: me.y - 5, width: 10, height: 10))
+        context.fill(dot, with: .color(.blue))
+        context.stroke(dot, with: .color(.white), lineWidth: 2)
+    }
+}
+
+/// 덜 찍힌 곳 안내: 가야 할 쪽을 가리키는 화살표 + 한 줄 (미니맵의 주황색 동그라미 쪽, Object Capture 의 화살표 참고)
+private struct CoverageGapBanner: View {
+    let info: CoverageGapInfo
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: info.near ? "arrow.down.to.line" : "arrow.up")   // 발밑이면 '아래로 기울이기'
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+                .rotationEffect(.degrees(info.near ? 0 : info.bearingDeg))
+                .frame(width: 44, height: 44)
+                .background(Color.orange, in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(info.title).font(.headline)
+                Text(info.detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
     }
 }

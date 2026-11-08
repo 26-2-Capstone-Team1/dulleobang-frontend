@@ -266,21 +266,21 @@ struct DBSecureField: View {
     }
 }
 
-/// 보라 집 + 3D 큐브 배지
+/// 초록 집 + 3D 큐브 배지
 struct HouseIllustration: View {
     var body: some View {
         GeometryReader { geo in
             let s = min(geo.size.width, geo.size.height)
             ZStack {
-                Circle().fill(DB.purpleSoft)
+                Circle().fill(DB.accentSoft)
                 Image(systemName: "house.fill")
                     .resizable()
                     .scaledToFit()
                     .frame(width: s * 0.5, height: s * 0.5)
-                    .foregroundStyle(DB.purple)
+                    .foregroundStyle(DB.accent)
                 Image(systemName: "cube.transparent")
                     .font(.system(size: s * 0.16, weight: .semibold))
-                    .foregroundStyle(DB.purple)
+                    .foregroundStyle(DB.accent)
                     .padding(s * 0.06)
                     .background(Color.white, in: Circle())
                     .shadow(color: Color.black.opacity(0.12), radius: 6, y: 3)

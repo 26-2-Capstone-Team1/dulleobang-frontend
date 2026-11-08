@@ -10,6 +10,8 @@ struct Room {
     var doors: [Opening]
     var windows: [Opening]
     var objects: [SceneObject]
+    /// 서버가 찾은 투명 유리 (SpaceResponse.glass). 뷰어가 그리기만 하고 충돌 판정에는 쓰지 않는다
+    var glass: [GlassPane] = []
     /// 입주 상태(내가 가구를 뺀 공간)인가. 이때 남아 있는 가구는 개인 가구라도 그대로 남는 것이므로 충돌에 넣는다
     var isMoveIn = false
 
@@ -19,6 +21,7 @@ struct Room {
 
     init(space: SpaceResponse) {
         self.init(geometry: space.roomGeometry, dimensions: space.roomDimensions, objects: space.objects)
+        glass = space.glass
     }
 
     /// 입주 상태: 제거된 객체를 뺀 목록으로 교체

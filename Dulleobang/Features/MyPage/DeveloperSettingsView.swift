@@ -5,8 +5,10 @@ import SwiftUI
 struct DeveloperSettingsView: View {
     @EnvironmentObject private var session: Session
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("baseURL") private var baseURL = "http://localhost:8080/api"
+    @AppStorage("baseURL") private var baseURL = AppConfig.defaultBaseURL
     @AppStorage("useRoomPlan") private var useRoomPlan = true
+    @AppStorage("lockFocus") private var lockFocus = true
+    @AppStorage("autoTorch") private var autoTorch = true
     @AppStorage(AppConfig.useMockDataKey) private var useMockData = AppConfig.useMockDataDefault
     @State private var offline: CaptureKind?
     @State private var cacheMB = AssetCache.sizeMB
@@ -44,12 +46,15 @@ struct DeveloperSettingsView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                if baseURL != AppConfig.defaultBaseURL {
+                    Button("기본 서버로 (팀 GCP 서버)") { baseURL = AppConfig.defaultBaseURL }
+                }
             } header: {
                 Text("백엔드 서버")
             } footer: {
                 Text(useMockData
                      ? "데모 모드에서는 쓰지 않습니다."
-                     : "같은 Wi-Fi 의 노트북에서 서버를 돌린다면 노트북 IP 를 넣으세요. localhost 는 휴대폰 자신을 뜻합니다.")
+                     : "기본은 팀 GCP 서버예요. 같은 Wi-Fi 의 노트북에서 서버를 돌린다면 노트북 IP 를 넣으세요. localhost 는 휴대폰 자신을 뜻합니다.")
             }
             .disabled(useMockData)
 
@@ -70,6 +75,8 @@ struct DeveloperSettingsView: View {
             Section {
                 Toggle("RoomPlan 으로 벽·문·창 함께 스캔", isOn: $useRoomPlan)
                     .disabled(!RoomPlanController.isSupported)
+                Toggle("촬영 중 초점 고정 (끄면 계속 자동 초점)", isOn: $lockFocus)
+                Toggle("어두우면 손전등 자동으로 켜기", isOn: $autoTorch)
                 Button { offline = .room } label: { Label("오프라인 방 촬영 → capture.zip", systemImage: "camera.viewfinder") }
                 Button { offline = .furniture } label: { Label("오프라인 가구 촬영 → capture.zip", systemImage: "sofa") }
             } header: {

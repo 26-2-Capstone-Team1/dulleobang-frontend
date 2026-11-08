@@ -6,7 +6,7 @@ enum CaptureKind: String, Codable { case room, furniture }
 enum TrackingState: String, Codable { case normal, limited, none }
 
 /// ARKit 이 추적이 불안정하다고 알려 준 이유 (ARCamera.TrackingState.Reason 을 ARKit 없이 쓰기 위한 사본)
-enum TrackingReason: Equatable { case initializing, excessiveMotion, insufficientFeatures, relocalizing, other }
+enum TrackingReason: String, Codable, Equatable { case initializing, excessiveMotion, insufficientFeatures, relocalizing, other }
 
 struct CaptureStats: Equatable {
     var kept = 0
@@ -16,6 +16,14 @@ struct CaptureStats: Equatable {
     var hasDepth = false
     var alert: CaptureAlert?          // 지금 화면에 띄울 경고 (없으면 nil)
     var floorCoverage: Double?        // 걸어온 길 중 바닥 사진을 찍은 곳의 비율 (LiDAR 없으면 nil)
+    var ceilingCoverage: Double?      // 걸어온 길 위의 천장을 찍은 곳의 비율 (첫 바퀴를 마친 뒤부터, LiDAR 없으면 nil)
+    var ceilingLow = false            // 천장이 기준(CaptureCoach.Config.ceilingAlertBelow) 미만이라 진행률을 주황으로 (안내를 포기했으면 false)
+    var surfaceCoverage: Double?      // 벽 · 바닥 중 사진 3장 이상에 나온 곳의 비율 (방 촬영 · RoomPlan, 모르면 nil)
+    var surfaceLow = false            // 첫 바퀴 뒤인데 기준(CoverageConfig.targetShare) 미만 → 주황
+    var torchAvailable = false        // 손전등이 있는 기기 (화면 오른쪽 위 버튼)
+    var torchOn = false               // 지금 손전등이 켜져 있음
+    var coverageMap: CoverageMap?     // 덜 찍힌 곳 미니맵 (방 촬영 · RoomPlan 벽을 안 뒤)
+    var coverageGap: CoverageGapInfo? // 지금 안내가 '덜 찍힌 곳' 이면 화살표 배너 (방향 · 종류 · 진행률)
     var furniture: [FurnitureChip] = []  // 가구별 전체 사진 상태 (방 촬영 · RoomPlan 이 찾은 가구, FurnitureShotTracker)
     var furnitureTip: FurnitureTip?   // 첫 바퀴 뒤, 아직 전체 사진이 없는 가구 하나를 안내 (없으면 nil)
     var hint = "시작 버튼을 눌러 촬영을 시작하세요"
@@ -47,17 +55,23 @@ struct FrameSampler {
     /// 저장해야 하면 true 를 반환하고 내부 상태(누적 거리, 커버리지)를 갱신한다.
     /// force = 이동 · 회전 기준을 건너뛰고 저장 (아직 전체 사진이 없는 가구가 지금 화면에서 통과할 때). 간격 · 추적 상태는 그대로 본다
     mutating func shouldKeep(_ T: simd_float4x4, time: Double, tracking: TrackingState, force: Bool = false) -> Bool {
+        guard wouldKeep(T, time: time, tracking: tracking, force: force) else { return false }
+        if let last { distance += simd_distance(T.columns.3.xyz, last.columns.3.xyz) }
+        last = T
+        lastTime = time
+        kept += 1
+        yawBins[Self.yawBin(T)] = true
+        return true
+    }
+
+    /// shouldKeep 과 같은 판정이지만 상태를 바꾸지 않는다 (흔들림 · 쓰기 대기로 건너뛴 프레임을 capture_log.json 에 세려고)
+    func wouldKeep(_ T: simd_float4x4, time: Double, tracking: TrackingState, force: Bool = false) -> Bool {
         guard tracking == .normal, time - lastTime >= minInterval else { return false }
         if let last {
             let dT = simd_distance(T.columns.3.xyz, last.columns.3.xyz)
             let dR = Self.rotationAngle(last, T)
             guard force || dT >= minTranslation || dR >= minRotationRad else { return false }
-            distance += dT
         }
-        last = T
-        lastTime = time
-        kept += 1
-        yawBins[Self.yawBin(T)] = true
         return true
     }
 
@@ -79,9 +93,16 @@ struct FrameSampler {
     }
 
     /// 화면 아래 안내 문구. spanM = 카메라가 실제로 움직인 범위, floorCoverage = 걸어온 길 중 바닥을 찍은 곳의 비율 (CaptureCoach),
-    /// furnitureMissing = 아직 전체 사진이 없는 가구 수 (FurnitureShotTracker, 같은 모양 가구로 대신할 수 있는 것은 뺌)
+    /// furnitureMissing = 아직 전체 사진이 없고 안내도 포기하지 않은 가구 수 (FurnitureShotTracker, 같은 모양 가구로 대신할 수 있는 것은 뺌),
+    /// furnitureFewViews = 전체 사진은 있지만 서로 다른 방향 사진이 적은 가구 수 (끝낼 수 있을 때 덧붙이기만 한다 — 끝내는 것을 막지 않는다),
+    /// ceilingCoverage = 걸어온 길 위의 천장을 찍은 곳의 비율 — 천장 단계를 안내할 때만 넘긴다 (첫 바퀴 전 · 안내를 포기함 · LiDAR 없음이면 nil → 이 단계를 건너뜀)
+    /// coveragePrompt = 벽 · 바닥 중 덜 찍힌 곳 안내 (첫 바퀴 뒤), coverageKnown = 커버리지로 끝을 판단할 수 있음 (그러면 '한 바퀴 더' 를 묻지 않는다),
+    /// turnHeavy = 많이 돌기만 할 때 → 경고 대신 팁
     func hint(kind: CaptureKind, tracking: TrackingState, spanM: Float, minSpanM: Float, goodFrames: Int,
-              floorCoverage: Double? = nil, floorTarget: Double = 0.85, furnitureMissing: Int = 0) -> String {
+              floorCoverage: Double? = nil, floorTarget: Double = 0.85,
+              ceilingCoverage: Double? = nil, ceilingTarget: Double = 0.7,
+              furnitureMissing: Int = 0, furnitureFewViews: Int = 0,
+              coveragePrompt: String? = nil, coverageKnown: Bool = false, turnHeavy: Bool = false) -> String {
         switch tracking {
         case .none: return "카메라를 천천히 움직여 주변을 비춰 주세요"
         case .limited: return "위치를 잡는 중이에요. 천천히 움직여 주세요"
@@ -96,14 +117,22 @@ struct FrameSampler {
             if spanM < minSpanM {
                 return "벽을 따라 걸으면서 찍어 주세요 (이동 범위 \(String(format: "%.1f", spanM))/\(String(format: "%.0f", minSpanM)) m)"
             }
+            if turnHeavy { return "팁: 제자리에서 돌기보다 벽을 바라보며 옆으로 걸으면 3D 가 더 선명해요" }
             if covered < Self.yawBinCount { return "아직 비추지 않은 방향이 있어요 (\(covered)/\(Self.yawBinCount))" }
             if let floor = floorCoverage, floor < floorTarget {
                 return "이제 폰을 아래로 30~45° 기울여 걸어온 길의 바닥을 찍어 주세요 (바닥 \(Int((floor * 100).rounded()))%)"
             }
-            if furnitureMissing > 0 {
-                return "가구 \(furnitureMissing)개는 아직 전체 사진이 없어요. 위 목록의 회색 가구를 하나씩 전체가 한 화면에 들어오게 찍어 주세요"
+            if let ceiling = ceilingCoverage, ceiling < ceilingTarget {
+                return "이제 폰을 위로 30~45° 기울여 걸어온 길 위의 천장을 찍어 주세요. 벽 모서리나 조명이 같이 보이면 위치를 덜 놓쳐요 (천장 \(Int((ceiling * 100).rounded()))%)"
             }
-            if kept < goodFrames { return "좋아요. 높이를 바꿔 한 바퀴 더 돌면 더 선명해져요 (\(kept)/\(goodFrames)장)" }
+            if let prompt = coveragePrompt { return prompt }                 // 벽 · 바닥 중 덜 찍힌 곳 (첫 바퀴 뒤)
+            if furnitureMissing > 0 {
+                return "가구 \(furnitureMissing)개는 아직 전체 사진이 없어요. 위 목록의 회색 가구를 하나씩 전체가 한 화면에 들어오게 찍어 주세요 (일부가 가려져도 괜찮아요)"
+            }
+            if !coverageKnown, kept < goodFrames { return "좋아요. 방을 한 바퀴 더 천천히 둘러보면 더 선명해져요 (\(kept)/\(goodFrames)장)" }   // 커버리지를 모를 때만 (LiDAR 없는 기기)
+            if furnitureFewViews > 0 {
+                return "충분히 촬영했습니다. 종료할 수 있어요 (가구 \(furnitureFewViews)개는 다른 방향에서도 찍으면 더 좋아요)"
+            }
             return "충분히 촬영했습니다. 종료할 수 있어요"
         }
     }
@@ -135,12 +164,12 @@ enum CaptureAlert: String, CaseIterable, Equatable {
 
     var detail: String {
         switch self {
-        case .trackingLost: return "방금 찍은 곳을 천천히 다시 비춰 주세요"
+        case .trackingLost: return "조금 뒤로 가서 방금 찍은 곳을 천천히 다시 비춰 주세요"
         case .tooDark: return "불을 켜거나 더 천천히 움직여 주세요"
         case .tooFast: return "천천히 움직여 주세요. 많이 흔들린 사진은 저장하지 않아요"
         case .featureless: return "가구 · 문 · 모서리가 함께 보이게 조금 물러나 비춰 주세요"
         case .tooClose: return "한 걸음 물러나 넓게 비춰 주세요"
-        case .standingStill: return "벽을 따라 걸으면서 찍어야 3D가 선명하게 나와요"
+        case .standingStill: return "방을 따라 한 바퀴 걸으면서 찍어야 3D가 선명하게 나와요"
         case .floorMissing: return "폰을 아래로 30~45° 기울여 걸어온 길의 바닥이 화면 절반쯤 보이게 찍어 주세요"
         }
     }
@@ -178,14 +207,15 @@ enum CaptureAlert: String, CaseIterable, Equatable {
 ///  - 흔들림: 직전 폴링과의 움직임으로 구한 화면 가운데 점의 이동 속도 × 셔터 시간 = 사진에서 번지는 픽셀 수(예상)
 ///    (회전과 옆 이동이 서로 상쇄되는 경우 — 가구 주위를 돌며 가구를 계속 바라볼 때 — 도 반영)
 ///  - 제자리: 15초가 지나도 이동 범위가 1 m 미만이고 걷지 않거나, 최근 8초 동안 35 cm 도 안 움직이고 60° 이상 돌아섬
+///  - 옆걸음 팁(경고 아님): 최근 8초 동안 90° 넘게 돌면서 1° 에 0.5 cm 도 안 움직이면 turnHeavy → 안내 문구에 팁만 (AI 팀: new1 도 도는 쪽이 많았지만 사진이 많으면 괜찮음)
 ///  - 무늬 없음 / 너무 가까움: 화면 밝기 변화 점수, LiDAR 가운데 깊이
 ///  - 바닥: 저장한 프레임의 LiDAR 점으로 바닥 높이(가장 낮은 수평면)를 찾고, 바닥이 화면의 25% 이상인 '바닥 사진'이
 ///    걸어온 길(카메라가 지나간 자리) 곳곳에서 찍혔는지 센다. 첫 바퀴가 끝났는데 60% 미만이고 폰이 수평이면 '바닥이 거의 안 찍혔어요'
 ///    (실제 촬영본 capture 3: 바닥 사진 152장 중 2장 → 걸어온 길의 18% → 3DGS 바닥에 구멍. 이 경고가 93초에 떴을 것)
 struct CaptureCoach {
     struct Config {
-        var warnBlurPx = 5.0             // 예상 흔들림(px, 컬러 1920 폭 기준)이 이 이상이면 '너무 빨라요' (1/60초면 초당 약 13°)
-        var skipBlurPx = 10.0            // 이 이상 흔들린 프레임은 저장하지 않는다 (CaptureRecorder 가 사용)
+        var warnBlurPx = 5.0             // 예상 흔들림(px, 컬러 1920 폭 기준)이 이 이상이면 '너무 빨라요' — 사진을 버리기(skipBlurPx) 직전에만 (1/60초면 초당 약 13°)
+        var skipBlurPx = 6.0             // 이 이상 흔들린 프레임은 저장하지 않는다 (CaptureRecorder 가 사용. 가구 전체 사진 기준 maxBlurPx 와 같음)
         var darkExposureS = 1.0 / 75     // 흔들릴 때 셔터(평활)가 이보다 길면 '어두워서 흔들려요'. ARKit 은 60 fps 라 최대 1/60초
         var tooCloseM = 0.45             // 화면 가운데 깊이가 이보다 가까우면 '너무 가까워요'
         var featurelessScore = 6.0       // 밝기 변화 점수가 이보다 낮으면 '무늬 없는 면' (화이트보드 3.4 · 보통 장면 10 이상)
@@ -194,6 +224,8 @@ struct CaptureCoach {
         var stillWindowS = 8.0           // 또는 최근 이 시간 동안
         var stillMoveM = 0.35            // 이만큼도 움직이지 않고
         var stillTurnDeg = 60.0          // 바라보는 방향(수평)이 이 이상 바뀌었으면 '제자리'
+        var turnHeavyMinDeg = 90.0       // 최근 창(stillWindowS)에서 이만큼 넘게 돌았는데
+        var turnHeavyCmPerDeg = 0.5      // 1° 돌 때 이만큼(cm)도 안 움직였으면 '옆으로 걸으면 더 선명해요' 팁 (경고 아님. 10월 8일 촬영본 평균 0.96 · AI 팀 new1 0.8)
         var recentWalkM = 0.5            // 최근 창에서 이만큼 움직였으면 지금 걷는 중으로 본다
         var fallbackExposureS = 1.0 / 60 // 셔터 시간을 모를 때
         var fallbackDepthM = 2.0         // 깊이를 모를 때 (LiDAR 없는 기기)
@@ -215,6 +247,18 @@ struct CaptureCoach {
         var floorAfterS = 60.0           // 첫 바퀴를 못 끝내도 이 시간이 지나면 바닥 경고를 본다
         var loopSpanM: Float = 2.0       // 첫 바퀴 완료 = 12방향 + 이동 범위 이만큼 (AppConfig.roomMinSpanM 과 같게)
         var lookingDownDeg: Float = -20  // 이보다 아래를 보고 있으면 바닥을 찍는 중으로 본다
+        // 천장 (LiDAR) — 바닥과 같은 방식. 선택 사항이라 경고 띠 · 진동은 없고 안내 문구와 진행률만 보여 준다
+        var lookingUpDeg: Float = 20     // 이보다 위를 보고 있어야 천장을 찍는 중으로 본다 ('무늬 없는 면' 경고도 이때는 끈다 — 천장은 대개 흰색)
+        var ceilingMinAboveCamM: Float = 0.4  // 천장은 카메라보다 0.4 ~ 3.5 m 위
+        var ceilingMaxAboveCamM: Float = 3.5
+        var ceilingTolM: Float = 0.05    // 천장 높이 ± 이만큼 = 천장 점
+        var ceilingResetM: Float = 0.08  // 천장 높이 추정이 이만큼 바뀌면 다시 센다
+        var ceilingLookShare = 0.25      // LiDAR 점 중 천장이 이 비율 이상이면서 위를 보고 있으면 '천장 사진' (수평으로 들어도 넓은 방이면 먼 천장이 25~30% 까지 나와서 위를 보고 있는지(lookingUpDeg)도 같이 본다)
+        var ceilingPassRadiusM: Float = 0.5  // 천장 사진을 찍은 자리 ± 이만큼은 천장을 찍은 것으로 본다
+        var ceilingHintBelow = 0.7       // 이보다 적으면 안내 문구에 '천장 찍기' 단계 (첫 바퀴 · 바닥 단계를 마친 뒤)
+        var ceilingAlertBelow = 0.4      // 이보다 적으면 진행률을 주황으로, 끝낼 때 한 번 묻는다
+        var ceilingStallS = 40.0         // 안내하는 동안 천장 비율이 이만큼(초) 안 늘면 포기 — LiDAR 로 안 잡히는 천장 · 비스듬한 천장에서 계속 재촉하지 않게
+        var ceilingProgress = 0.02       // 이만큼 늘어야 '늘었다' 로 본다
     }
 
     struct Sample {
@@ -239,6 +283,7 @@ struct CaptureCoach {
     private(set) var frameBlurPx = 0.0       // 이번 폴링의 예상 흔들림 (px) → 저장 여부 · poses.json 용
     private(set) var spanM = 0.0             // 추적이 정상일 때 카메라가 지나간 범위 (바닥 기준 상자의 대각선, m)
     private(set) var alert: CaptureAlert?
+    private(set) var turnHeavy = false       // 최근 8초 동안 걸은 거리에 비해 많이 돌았음 → 안내 문구에 '옆으로 걷기' 팁 (경고 아님)
     /// 마지막으로 받은 샘플 시각 (같은 프레임을 두 번 넣지 않도록 CaptureRecorder 가 본다)
     private(set) var lastSampleTime: Double?
 
@@ -258,10 +303,18 @@ struct CaptureCoach {
     private var heightBins: [Int: Int] = [:] // 저장한 프레임의 LiDAR 점 높이 히스토그램
     private var heightTotal = 0
     private var camYSum = 0.0, camYCount = 0
-    private var savedFrames: [(id: Int, cam: SIMD3<Float>, heights: [Float], samples: Int)] = []   // 바닥 높이가 바뀌면 다시 세려고 보관
+    private var savedFrames: [(id: Int, cam: SIMD3<Float>, heights: [Float], samples: Int, pitch: Float)] = []   // 바닥 · 천장 높이가 바뀌면 다시 세려고 보관
     private var floorPassed: Set<Cell> = []  // 바닥 사진을 찍은 자리 주변 칸
     private(set) var floorPhotos = 0         // 바닥 사진(바닥이 화면의 25% 이상) 수
     private var walked: Set<Cell> = []
+    // 천장 (LiDAR)
+    private(set) var ceilingY: Float?        // 추정한 천장 높이 (ARKit 월드 y, m)
+    private var countedCeiling: Float?       // 천장 사진을 마지막으로 다시 셀 때 쓴 천장 높이
+    private var ceilingPassed: Set<Cell> = []   // 천장 사진을 찍은 자리 주변 칸
+    private(set) var ceilingPhotos = 0       // 천장 사진(천장이 LiDAR 점의 25% 이상이고 폰을 위로 듦) 수
+    private(set) var ceilingGaveUp = false   // 안내했는데도 천장 비율이 안 늘어 포기함 (안내 · 끝낼 때 확인에서 뺀다)
+    private var ceilingBest = 0.0            // 안내하는 동안의 최고 천장 비율
+    private var ceilingBestAt: Double?       // 그 비율에 처음 닿은 시각 (nil = 지금 천장을 안내하는 중이 아님)
 
     init(config: Config = Config(), checksWalking: Bool) {
         self.config = config
@@ -275,6 +328,8 @@ struct CaptureCoach {
         if let e = s.exposureS, e > 0 { exposureEMA = exposureEMA == 0 ? e : 0.8 * exposureEMA + 0.2 * e }
         updateMotion(s)
         if s.tracking == .normal { updatePlace(s) }
+        turnHeavy = checksWalking && s.tracking == .normal && isTurnHeavyNow()
+        updateCeilingAsk(s)
         debounce(conditions(s), at: s.time)
         let shown = active
         var top = CaptureAlert.allCases.first { shown.contains($0) }
@@ -348,6 +403,28 @@ struct CaptureCoach {
         return false
     }
 
+    /// 창이 거의 찼을 때만 판단한다 (처음 몇 초는 판단하지 않음)
+    private func isTurnHeavyNow() -> Bool {
+        guard let first = window.first, let newest = window.last,
+              newest.time - first.time >= config.stillWindowS * 0.9 - Self.eps else { return false }
+        return isTurnHeavy()
+    }
+
+    /// 최근 창에서 걸은 거리에 비해 많이 돌았는지 (옆으로 걷지 않고 제자리에서 돌며 찍음 → 3DGS 가 깊이를 알아낼 시차가 없다).
+    /// 0.5초 간격으로 솎은 샘플 사이의 이동 거리 · 방향 변화를 더한다 (손떨림이 쌓이지 않게)
+    private func isTurnHeavy() -> Bool {
+        var path = 0.0, turn = 0.0
+        var prev: (time: Double, xz: SIMD2<Float>, heading: Double)?
+        for s in window {
+            guard let p = prev else { prev = s; continue }
+            guard s.time - p.time >= 0.5 - Self.eps else { continue }
+            path += Double(simd_distance(s.xz, p.xz))
+            turn += abs((s.heading - p.heading).remainder(dividingBy: 360))
+            prev = s
+        }
+        return turn >= config.turnHeavyMinDeg && path * 100 < config.turnHeavyCmPerDeg * turn
+    }
+
     /// 0.1초씩 더한 시각의 부동소수점 오차 때문에 경계에서 한 번 늦게 켜지지 않게
     private static let eps = 1e-6
 
@@ -359,10 +436,12 @@ struct CaptureCoach {
         if blurPx >= config.warnBlurPx || (s.tracking == .limited && s.reason == .excessiveMotion) {
             c.insert(.tooFast)                               // 어두우면 update() 에서 tooDark 로 보여 준다
         }
-        let lookingDown = Self.pitchDeg(s.transform) < config.lookingDownDeg
-        // 바닥을 찍으라고 해 놓고 '무늬 없음' 을 띄우지 않도록, 아래를 볼 때는 밝기 점수로 판단하지 않는다
+        let pitch = Self.pitchDeg(s.transform)
+        let lookingDown = pitch < config.lookingDownDeg
+        let lookingUp = pitch > config.lookingUpDeg
+        // 바닥 · 천장을 찍으라고 해 놓고 '무늬 없음' 을 띄우지 않도록, 아래나 위를 볼 때는 밝기 점수로 판단하지 않는다 (천장은 대개 흰색)
         if (s.tracking == .limited && s.reason == .insufficientFeatures)
-            || (!lookingDown && (s.textureScore.map { $0 < config.featurelessScore } ?? false)) {
+            || (!lookingDown && !lookingUp && (s.textureScore.map { $0 < config.featurelessScore } ?? false)) {
             c.insert(.featureless)
         }
         if let d = s.depthM, d < config.tooCloseM { c.insert(.tooClose) }
@@ -403,11 +482,13 @@ struct CaptureCoach {
             heightBins[Int((p.y / bin).rounded(.down)), default: 0] += 1
             heightTotal += 1
         }
-        savedFrames.append((id: frameId, cam: cam, heights: points.map(\.y), samples: max(samples ?? points.count, points.count)))
+        savedFrames.append((id: frameId, cam: cam, heights: points.map(\.y), samples: max(samples ?? points.count, points.count),
+                            pitch: Self.pitchDeg(camera)))
         if let levels = estimateFloorLevels() {                  // 못 찾으면 이전 추정을 그대로 둔다
             floorY = levels.main
             lowerFloors = levels.lower
         }
+        updateCeiling()                                          // 천장은 바닥을 못 찾았어도 따로 센다
         guard let f = floorY else { return nil }
         let floors = [f] + lowerFloors
         let moved = countedFloors.isEmpty || countedFloors.count != floors.count
@@ -485,6 +566,112 @@ struct CaptureCoach {
             return (main, lower)
         }
         return nil
+    }
+
+    // MARK: 천장 (LiDAR)
+
+    /// 걸어온 길 위의 천장을 찍은 곳(천장 사진을 찍은 자리 ± ceilingPassRadiusM)의 비율. 바닥(floorCoverage)과 같은 방식.
+    /// LiDAR 점이 없거나 아직 걸은 곳이 적으면 nil, 천장 높이를 아직 못 찾았으면 0
+    var ceilingCoverage: Double? {
+        guard hasDepth, walked.count >= config.floorMinWalkedCells else { return nil }
+        guard ceilingY != nil else { return 0 }
+        let passed = ceilingPassed
+        let covered = walked.reduce(0) { $0 + (passed.contains($1) ? 1 : 0) }
+        return Double(covered) / Double(walked.count)
+    }
+
+    /// 지금 천장 추정으로 저장한 프레임마다 천장 점 비율 (frameId → 비율). 촬영을 끝낼 때 poses.json 의 ceilingShare 로 쓴다
+    func ceilingShares() -> [Int: Double] {
+        guard ceilingY != nil else { return [:] }
+        var out: [Int: Double] = [:]
+        for frame in savedFrames where frame.id >= 0 { out[frame.id] = ceilingShare(frame.heights, samples: frame.samples) }
+        return out
+    }
+
+    private func ceilingShare(_ heights: [Float], samples: Int) -> Double {
+        guard let c = ceilingY else { return 0 }
+        let tol = config.ceilingTolM
+        let n = heights.reduce(0) { acc, y in acc + (abs(y - c) < tol ? 1 : 0) }
+        return Double(n) / Double(max(samples, 1))
+    }
+
+    /// 방금 넣은 프레임까지 반영해 천장 높이를 다시 추정하고, 천장 사진이면 찍은 자리 주변을 '천장을 찍은 곳' 으로 표시한다
+    private mutating func updateCeiling() {
+        if let level = estimateCeilingLevel() { ceilingY = level }       // 못 찾으면 이전 추정을 그대로 둔다
+        guard let c = ceilingY else { return }
+        let reset = config.ceilingResetM
+        let moved = countedCeiling.map { abs($0 - c) > reset } ?? true
+        if moved {                                                       // 처음 찾았거나 크게 바뀜 → 보관한 프레임으로 다시 센다
+            countedCeiling = c
+            ceilingPassed = []
+            ceilingPhotos = 0
+            let frames = savedFrames.dropLast()
+            for frame in frames { markCeilingPhoto(frame.heights, samples: frame.samples, cam: frame.cam, pitch: frame.pitch) }
+        }
+        if let last = savedFrames.last {
+            markCeilingPhoto(last.heights, samples: last.samples, cam: last.cam, pitch: last.pitch)
+        }
+    }
+
+    /// 천장이 화면(LiDAR 격자)의 25% 이상이고 폰을 위로 들고 찍은 프레임이면 찍은 자리 주변을 '천장을 찍은 곳' 으로 표시한다
+    private mutating func markCeilingPhoto(_ heights: [Float], samples: Int, cam: SIMD3<Float>, pitch: Float) {
+        guard let c = ceilingY, pitch >= config.lookingUpDeg, c - cam.y > 0.3,
+              ceilingShare(heights, samples: samples) >= config.ceilingLookShare else { return }
+        ceilingPhotos += 1
+        for cell in Self.cells(around: SIMD2(cam.x, cam.z), radius: config.ceilingPassRadiusM, cell: config.floorCellM) {
+            ceilingPassed.insert(cell)
+        }
+    }
+
+    /// 천장 = 카메라 위쪽에서 '점이 많이 모인' 가장 높은 높이. 벽 점은 천장에서 끝나므로 맨 위가 천장이고, 옷장 · 선반 윗면은 천장보다 낮아 걸러진다.
+    /// 바로 아래 25 cm 안에 3배 넘게 큰 수평면이 있으면(채광창 · 다락 · 우물천장의 높은 부분) 그 아래 면을 천장으로 본다
+    private func estimateCeilingLevel() -> Float? {
+        guard camYCount > 0 else { return nil }
+        let camY = Float(camYSum / Double(camYCount)), bin = config.floorBinM
+        let need = max(config.floorClusterMin, heightTotal / 250)
+        let bins = heightBins
+        let count = { (b: Int) -> Int in bins[b] ?? 0 }
+        let window = { (b: Int) -> Int in count(b - 1) + count(b) + count(b + 1) }
+        let reach = max(Int((config.floorLevelWindowM / bin).rounded()), 1)
+        let center = { (b: Int) -> Float in
+            let peak = (b - 2...b + 1).max { count($0) < count($1) } ?? b
+            let sum = (peak - 1...peak + 1).reduce(Float(0)) { $0 + Float(count($1)) * (Float($1) + 0.5) * bin }
+            return sum / Float(max(window(peak), 1))
+        }
+        for b in bins.keys.sorted(by: >) {
+            let y = (Float(b) + 0.5) * bin
+            if y > camY + config.ceilingMaxAboveCamM { continue }      // 너무 높음 = 잡음
+            if y < camY + config.ceilingMinAboveCamM { break }         // 천장이라기엔 너무 낮음
+            guard window(b) >= need else { continue }
+            if (b - reach...b - 1).contains(where: { window($0) > 3 * window(b) }) { continue }   // 바로 아래에 더 큰 면 → 이쪽은 높은 틈
+            return center(b)
+        }
+        return nil
+    }
+
+    /// 천장 단계(첫 바퀴를 마쳤고, 바닥 단계도 마쳤고, 천장이 hint 기준 미만)를 안내하는 동안 천장 비율이 ceilingStallS 초 안 늘면 포기한다.
+    /// 천장이 LiDAR 로 안 잡히거나(어둡고 반들반들한 · 아주 높은 · 비스듬한 천장) 사진을 찍어도 안 차는 방에서 같은 안내를 계속하지 않게 — 한 번 포기하면 이번 촬영에서는 다시 안내하지 않는다.
+    /// (안내 문구의 순서 '바닥 → 천장' 은 FrameSampler.hint 와 같게 둔다)
+    private mutating func updateCeilingAsk(_ s: Sample) {
+        let loopDone = s.directionsCovered >= 0.999 && spanM >= Double(config.loopSpanM)
+        let floorDone = floorCoverage.map { $0 >= config.floorHintBelow } ?? true
+        guard checksWalking, s.tracking == .normal, !ceilingGaveUp, loopDone, floorDone,
+              let cov = ceilingCoverage, cov < config.ceilingHintBelow else {
+            ceilingBestAt = nil                                          // 안내 중이 아님 → 다음에 안내를 시작할 때 처음부터 센다
+            return
+        }
+        guard let since = ceilingBestAt else {                           // 안내를 시작한 순간
+            ceilingBest = cov
+            ceilingBestAt = s.time
+            return
+        }
+        if cov > ceilingBest + config.ceilingProgress {
+            ceilingBest = cov
+            ceilingBestAt = s.time
+        } else if s.time - since >= config.ceilingStallS - Self.eps {
+            ceilingGaveUp = true
+            ceilingBestAt = nil
+        }
     }
 
     /// 카메라가 지나간 자리 ± walkRadiusM 의 칸 = 걸어온 길

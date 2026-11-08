@@ -253,6 +253,19 @@ struct SceneObject: Codable, Identifiable {
 
     /// RoomPlan 종류 중 빼는 게 말이 안 되는 고정 설비
     static let fixtureCategories: Set<String> = ["sink", "toilet", "bathtub", "fireplace", "stairs", "stove", "oven", "dishwasher"]
+    /// 서버가 objects 에 유리를 섞어 보낼 때의 종류. 가구가 아니므로 SpaceResponse.glass 로 옮긴다
+    static let glassCategory = "glass"
+}
+
+/// 서버(AI)가 LiDAR 로 찾은 투명 유리 하나 (tools/capture/glass_tools.py 가 만드는 glass.json 의 objects 와 같은 모양).
+/// LiDAR 레이저는 맑은 유리를 통과해서 스캔에는 유리가 비어 있다 → 뷰어가 이 자리에 반투명 유리 상자를 그린다
+struct GlassPane: Codable, Identifiable {
+    var id: String { objectId }
+    @FlexibleID var objectId: String
+    var glassKind: String? = nil       // window | door | wall(RoomPlan 은 벽이라고 한 유리벽) | gap(RoomPlan 이 벽을 못 찾은 자리)
+    var position: Vec3                 // 중심
+    var rotation: Rotation             // yaw: +Y 축 반시계(위에서 볼 때), 도. 폭(width)이 벽을 따라간다
+    var dimensions: Dimensions         // width(가로) height(세로) depth(두께, 보통 0.01)
 }
 
 struct SpaceResponse: Codable {
@@ -264,10 +277,12 @@ struct SpaceResponse: Codable {
     var collisionGeometryUri: String?  // glb
     var spaceVersion: Int? = nil       // 다시 촬영할 때마다 +1
     var objectsVersion: Int? = nil     // 중개사가 가구 구분을 바꿀 때마다 +1 (입주 상태 요청에 그대로 보낸다)
+    /// 서버가 LiDAR 로 찾은 투명 유리 (선택). 뷰어가 반투명 유리로 그리고, 가구 목록 · 가구 구분 · 충돌 판정에는 넣지 않는다
+    var glass: [GlassPane] = []
 
     enum CodingKeys: String, CodingKey {
         case threeDgsUri = "3dgsUri", pointsUri, roomGeometry, roomDimensions, objects, collisionGeometryUri
-        case spaceVersion, objectsVersion
+        case spaceVersion, objectsVersion, glass
     }
 }
 
@@ -279,10 +294,16 @@ extension SpaceResponse {
         pointsUri = try c.decodeIfPresent(String.self, forKey: .pointsUri)
         roomGeometry = try c.decodeIfPresent(RoomGeometry.self, forKey: .roomGeometry)
         roomDimensions = try c.decodeIfPresent(RoomDimensions.self, forKey: .roomDimensions)
-        objects = try c.decodeIfPresent([SceneObject].self, forKey: .objects) ?? []
+        let all = try c.decodeIfPresent([SceneObject].self, forKey: .objects) ?? []
+        objects = all.filter { $0.category != SceneObject.glassCategory }
         collisionGeometryUri = try c.decodeIfPresent(String.self, forKey: .collisionGeometryUri)
         spaceVersion = try? c.decodeIfPresent(Int.self, forKey: .spaceVersion)
         objectsVersion = try? c.decodeIfPresent(Int.self, forKey: .objectsVersion)
+        // 유리는 보여 주기용이라 잘못 와도 공간 전체를 못 여는 일은 없게 한다. objects 에 category "glass" 로 섞여 와도 유리로 옮긴다
+        let separate = (try? c.decodeIfPresent([GlassPane].self, forKey: .glass)) ?? []
+        glass = separate + all.filter { $0.category == SceneObject.glassCategory }.map {
+            GlassPane(objectId: $0.objectId, glassKind: nil, position: $0.position, rotation: $0.rotation, dimensions: $0.dimensions)
+        }
     }
 }
 

@@ -5,9 +5,14 @@ import Security
 final class AppConfig {
     static let shared = AppConfig()
 
+    /// 기본 백엔드 = 팀 GCP 서버(dulleobang-backend VM, 서울 · 포트 8080). 설정 화면에서 다른 주소를 넣으면 그쪽이 우선.
+    /// 아직 HTTP 만 있어서 Info.plist 에 ATS 예외(NSAllowsArbitraryLoads)가 켜져 있다.
+    /// HTTPS 도메인이 생기면 여기만 https://api.<도메인>/api 로 바꾸고 ATS 예외를 지운다.
+    static let defaultBaseURL = "http://34.47.87.3:8080/api"
+
     var baseURL: URL {
         let s = UserDefaults.standard.string(forKey: "baseURL")?.trimmingCharacters(in: .whitespaces) ?? ""
-        return URL(string: s).flatMap { $0.scheme == nil ? nil : $0 } ?? URL(string: "http://localhost:8080/api")!
+        return URL(string: s).flatMap { $0.scheme == nil ? nil : $0 } ?? URL(string: Self.defaultBaseURL)!
     }
     /// 로그인한 사용자 (X-User-Id 헤더). 로그아웃 상태면 nil
     var userId: String? { UserDefaults.standard.string(forKey: "userId").flatMap { $0.isEmpty ? nil : $0 } }
@@ -23,15 +28,18 @@ final class AppConfig {
     static let useMockDataDefault = true
     var useMockData: Bool { UserDefaults.standard.object(forKey: Self.useMockDataKey) as? Bool ?? Self.useMockDataDefault }
 
-    // 촬영 (방)
-    let minTranslationM: Float = 0.15       // 이전 저장 프레임 대비 최소 이동
-    let minRotationDeg: Float = 10          // 최소 회전
-    let minIntervalSec: Double = 0.3        // 최소 저장 간격
-    let jpegQuality: CGFloat = 0.9
+    // 촬영 (방) — 3DGS 는 사진이 많을수록 좋아서(AI 팀 실험: 사진을 절반으로 줄이면 −0.8 dB) 초당 약 5장씩 저장한다
+    let minTranslationM: Float = 0.02       // 직전 저장 프레임 대비 최소 이동 (가구 촬영은 절반). 가만히 서 있을 때 같은 사진이 쌓이지 않게만 막는다
+    let minRotationDeg: Float = 2           // 최소 회전
+    let minIntervalSec: Double = 0.18       // 최소 저장 간격 ≈ 초당 5장 (10 Hz 폴링 두 번에 한 번. ARKit 시각은 1/60초 단위라 두 번 사이가 0.183초일 수 있다)
+    let jpegQuality: CGFloat = 0.85         // 장 수가 늘어난 만큼 용량을 줄인다 (AI 팀 권장 0.85~0.9)
     let roomMinSpanM: Float = 2.0           // 가이드: 방 안에서 카메라가 움직인 범위(바닥 기준 상자의 대각선) 권장값
-    let roomGoodFrames = 150                // 가이드: 이만큼 찍으면 '충분히 촬영했습니다'
+    let roomGoodFrames = 500                // 가이드: 이만큼 찍으면 '충분히 촬영했습니다' (초당 5장이면 약 100초)
     // 촬영 중 경고(흔들림 · 제자리 · 어두움 · 무늬 없음 · 너무 가까움)의 기준값은 CaptureCoach.Config 에 있다
     let sampleHz: Double = 10               // currentFrame 폴링 주기
+    var lockFocus: Bool { UserDefaults.standard.object(forKey: "lockFocus") as? Bool ?? true }   // 촬영 중 초점 고정 (설정(개발자)에서 끌 수 있음)
+    let focusLockAfterS: Double = 2.0       // 첫 프레임에서 이만큼 뒤(자동 초점이 방에 맞춰진 뒤) 초점을 잠근다
+    var autoTorch: Bool { UserDefaults.standard.object(forKey: "autoTorch") as? Bool ?? true }   // 어두우면 손전등 자동으로 켜기 (설정(개발자)에서 끌 수 있음)
     var useRoomPlan: Bool { UserDefaults.standard.object(forKey: "useRoomPlan") as? Bool ?? true }
 
     // 뷰어 / 배치

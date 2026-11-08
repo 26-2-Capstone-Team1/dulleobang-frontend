@@ -1,7 +1,7 @@
 import MapKit
 import SwiftUI
 
-/// 둘러보기 (데모 2번째 화면): 지도 위 가격 말풍선 + 아래 매물 시트 ("매물 · 총 N건")
+/// 둘러보기 (데모 2번째 화면): 위쪽 빠른 필터 칩 · 지도 위 가격 말풍선(3D 매물은 초록) · 핀을 누르면 미리보기 카드 · 아래 매물 시트 ("이 지역 매물 N건")
 /// 좌표는 서버의 latitude/longitude 를 쓰고, 없으면 주소를 기기에서 지오코딩한다.
 struct BrowseMapView: View {
     var body: some View { TabStack { BrowseMapContent() } }
@@ -34,6 +34,7 @@ private struct BrowseMapContent: View {
     @State private var loading = false
     @State private var loadError: String?
     @State private var showFilter = false
+    @State private var selectedId: String?          // 누른 핀 (미리보기 카드)
 
     /// 중앙대 서울캠퍼스 주변 (흑석동·상도동)
     static let defaultRegion = MKCoordinateRegion(
@@ -44,6 +45,7 @@ private struct BrowseMapContent: View {
         let pins = allPins
         let visible = pins.filter { isInside(region, $0.coordinate) }
         let unlocated = listings.filter { coordinate(of: $0) == nil }
+        let selected = visible.first { $0.listing.listingId == selectedId }
         ZStack(alignment: .top) {
             mapLayer(pins)
             topBar
@@ -52,6 +54,20 @@ private struct BrowseMapContent: View {
             } content: {
                 sheetList(visible: visible, unlocated: unlocated)
             }
+            if let selected, sheet == .collapsed {
+                // 핀을 누르면 접힌 목록 바로 위에 미리보기 카드 (누르면 상세, ✕ 로 닫기)
+                MapPreviewCard(listing: selected.listing,
+                               onOpen: { navigate(.listing(selected.listing.listingId)) },
+                               onClose: { withAnimation { selectedId = nil } })
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, BottomSheet<EmptyView, EmptyView>.height(.collapsed, in: 0) + 10)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selectedId)
+        .onChange(of: sheet) { _, d in
+            if d != .collapsed { selectedId = nil }        // 목록을 올리면 카드는 닫는다
         }
         .toolbar(.hidden, for: .navigationBar)
         .task(id: query) { await load() }
@@ -83,30 +99,57 @@ private struct BrowseMapContent: View {
 
     @ViewBuilder private func annotationView(_ c: MapCluster) -> some View {
         if c.pins.count == 1 {
-            PriceBubble(listing: c.pins[0].listing)
-                .onTapGesture { navigate(.listing(c.pins[0].listing.listingId)) }
+            let l = c.pins[0].listing
+            PriceBubble(listing: l, selected: l.listingId == selectedId)
+                .onTapGesture {
+                    if selectedId == l.listingId {
+                        navigate(.listing(l.listingId))          // 한 번 더 누르면 상세
+                    } else {
+                        selectedId = l.listingId                 // 처음 누르면 미리보기 카드
+                        sheet = .collapsed
+                    }
+                }
         } else {
             ClusterBubble(count: c.pins.count)
-                .onTapGesture { zoom(into: c) }
+                .onTapGesture {
+                    selectedId = nil
+                    zoom(into: c)
+                }
         }
     }
 
+    /// 빠른 필터 칩(홈과 같음) + 필터 버튼. 불러오는 중이면 아래에 작은 표시
     private var topBar: some View {
-        HStack {
-            if loading { ProgressView().padding(10).background(Color.white, in: Circle()) }
-            Spacer()
-            FilterButton(active: query.isFiltered) { showFilter = true }
-                .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 0) {
+                QuickFilterBar(query: $query, floating: true)
+                FilterButton(active: query.hasPriceLimit) { showFilter = true }
+                    .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
+                    .padding(.leading, 4)
+                    .padding(.trailing, 16)
+            }
+            if loading {
+                ProgressView().padding(10).background(Color.white, in: Circle()).padding(.leading, 16)
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.top, 2)
     }
 
     private func sheetHeader(count: Int) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("매물").font(.title3.weight(.bold)).foregroundStyle(DB.ink)
+            Text("이 지역 매물 \(count)건").font(.headline.weight(.bold)).foregroundStyle(DB.ink)
             Spacer()
-            Text("총 \(count)건").font(.subheadline).foregroundStyle(DB.sub)
+            if sheet == .collapsed {
+                Button { sheet = .half } label: {
+                    HStack(spacing: 3) {
+                        Text("목록 보기")
+                        Image(systemName: "chevron.up")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DB.sub)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 6)
@@ -211,36 +254,106 @@ private struct BrowseMapContent: View {
     }
 }
 
-/// 지도 가격 말풍선: 동그란 사진 · "보/월" · "1000/54" · 보라 점
+/// 지도 가격 말풍선: 동그란 사진 · "3D"/"보/월"/"전세" · "1000/54". 3D 매물은 초록, 누른 핀은 검정으로 조금 크게
 struct PriceBubble: View {
     let listing: Listing
+    var selected = false
+
+    private var fill: Color { selected ? DB.ink : (listing.isSpaceReady ? DB.accent : Color.white) }
+    private var textColor: Color { selected || listing.isSpaceReady ? Color.white : DB.ink }
+
     var body: some View {
         VStack(spacing: 3) {
             HStack(spacing: 6) {
                 RemoteImage(uri: listing.coverUri, placeholderIcon: "house")
                     .frame(width: 30, height: 30)
                     .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(Fmt.isJeonse(listing) ? "전세" : "보/월")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(DB.sub)
+                    HStack(spacing: 2) {
+                        if listing.isSpaceReady { Image(systemName: "cube.fill").font(.system(size: 7, weight: .bold)) }
+                        Text(listing.isSpaceReady ? "3D" : (Fmt.isJeonse(listing) ? "전세" : "보/월"))
+                    }
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(textColor.opacity(0.8))
                     Text(Fmt.priceShort(listing))
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(DB.ink)
+                        .foregroundStyle(textColor)
                 }
             }
             .padding(.leading, 4)
             .padding(.trailing, 12)
             .padding(.vertical, 4)
-            .background(Color.white, in: Capsule())
-            .shadow(color: Color.black.opacity(0.2), radius: 4, y: 2)
+            .background(fill, in: Capsule())
+            .shadow(color: Color.black.opacity(selected ? 0.35 : 0.2), radius: selected ? 6 : 4, y: 2)
             Circle()
-                .fill(DB.purple)
+                .fill(selected ? DB.ink : DB.accent)
                 .frame(width: 10, height: 10)
                 .overlay(Circle().stroke(Color.white, lineWidth: 2))
         }
+        .scaleEffect(selected ? 1.12 : 1, anchor: .bottom)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selected)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Fmt.price(listing) + (listing.isSpaceReady ? ", 3D 공간 있음" : ""))
+        .accessibilityAddTraits(.isButton)
     }
 }
+
+/// 지도에서 핀을 누르면 뜨는 매물 카드: 사진 · 가격 · 방 정보 · 자세히 보기 (카드를 누르면 상세, ✕ 로 닫기, ♡ 저장)
+struct MapPreviewCard: View {
+    let listing: Listing
+    let onOpen: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RemoteImage(uri: listing.coverUri, placeholderIcon: "house")
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .topLeading) {
+                    if listing.isSpaceReady { ThreeDBadge().padding(5) }
+                }
+            VStack(alignment: .leading, spacing: 3) {
+                if listing.agent?.isVerified == true { VerifiedBrokerBadge() }
+                Text(Fmt.price(listing)).font(.title3.weight(.heavy)).foregroundStyle(DB.ink).lineLimit(1)
+                Text(Fmt.cardFacts(listing).ifEmpty(" ")).font(.footnote).foregroundStyle(DB.ink).lineLimit(1)
+                Text(Fmt.cardSub(listing)).font(.caption).foregroundStyle(DB.sub).lineLimit(1)
+                HStack(spacing: 2) {
+                    Text("자세히 보기")
+                    Image(systemName: "chevron.right")
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(DB.accent)
+                .padding(.top, 2)
+            }
+            .padding(.trailing, 30)                 // 오른쪽 ✕ · ♡ 자리
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 18))
+        .shadow(color: Color.black.opacity(0.18), radius: 12, y: 4)
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .onTapGesture(perform: onOpen)
+        .overlay(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(DB.sub)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("카드 닫기")
+                Spacer(minLength: 0)
+                HeartButton(listingId: listing.listingId, size: 20)
+            }
+            .padding(4)
+        }
+        .accessibilityAction(named: "자세히 보기", onOpen)
+    }
+}
+
 
 struct ClusterBubble: View {
     let count: Int
@@ -249,7 +362,7 @@ struct ClusterBubble: View {
             .font(.subheadline.weight(.bold))
             .foregroundStyle(Color.white)
             .frame(width: 40, height: 40)
-            .background(DB.purple.opacity(0.9), in: Circle())
+            .background(DB.accent.opacity(0.9), in: Circle())
             .overlay(Circle().stroke(Color.white, lineWidth: 2))
             .shadow(color: Color.black.opacity(0.2), radius: 4, y: 2)
     }

@@ -97,7 +97,7 @@ struct ChatRow: View {
                         .foregroundStyle(Color.white)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(DB.purple, in: Capsule())
+                        .background(DB.accent, in: Capsule())
                 }
             }
         }
@@ -115,7 +115,8 @@ struct ChatRow: View {
 
 // MARK: - 채팅방
 
-/// 채팅방 (데모 "임차인의 매물 보기" 4번째 화면): 헤더(가격 · "지역 방종류 층 · 중개사무소") · 말풍선 · 메시지 입력
+/// 채팅방 (데모 "임차인의 매물 보기" 4번째 화면): 헤더(가격 · "지역 방종류 층 · 중개사무소") · 위에 고정한 매물 카드(3D 보기 · 매물 보기)
+/// · 날짜 구분선 · 보낸 시각이 붙은 말풍선 · 질문 칩 · 메시지 입력
 struct ChatRoomView: View {
     let chatId: String
     @EnvironmentObject private var session: Session
@@ -126,6 +127,8 @@ struct ChatRoomView: View {
     @State private var text = ""
     @State private var error: String?
     @State private var loaded = false
+    @State private var listing: Listing?                  // 위 매물 카드의 3D 보기 · 관리비 (한 번만 받아 온다)
+    @State private var viewer: ViewerRoute?
 
     private var allMessages: [ChatMessage] { messages + pending }
     private var canSend: Bool { !text.trimmed.isEmpty }
@@ -139,8 +142,19 @@ struct ChatRoomView: View {
                             .font(.footnote).foregroundStyle(DB.sub).multilineTextAlignment(.center)
                             .padding(.top, 40)
                     }
-                    ForEach(allMessages) { m in
-                        MessageBubble(message: m, mine: isMine(m)).id(m.id)
+                    ForEach(ChatTimeline.items(allMessages)) { item in
+                        switch item {
+                        case .day(let label):
+                            Text(label)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(DB.sub)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(DB.field, in: Capsule())
+                                .padding(.vertical, 4)
+                        case .message(let m, let time):
+                            MessageBubble(message: m, mine: isMine(m), time: time).id(m.id)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -152,6 +166,7 @@ struct ChatRoomView: View {
                 if let last = allMessages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { pinnedCard }
         .safeAreaInset(edge: .bottom) { inputBar }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -164,8 +179,68 @@ struct ChatRoomView: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
+        .task(id: detail?.listing?.listingId) {
+            guard let id = detail?.listing?.listingId, listing?.listingId != id else { return }
+            listing = try? await ListingAPI.get(id)
+        }
+        .fullScreenCover(item: $viewer) { r in SpaceViewerView(route: r, isBroker: isListingOwner) }
         .errorAlert($error)
     }
+
+    /// 대화 위에 고정한 매물 카드: 사진 · 가격 · 방 정보 · [3D 보기] [매물 보기]
+    @ViewBuilder private var pinnedCard: some View {
+        if let l = detail?.listing {
+            HStack(spacing: 12) {
+                RemoteImage(uri: l.thumbnailUri ?? listing?.coverUri, placeholderIcon: "house")
+                    .frame(width: 60, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(ChatRow.priceText(l)).font(.subheadline.weight(.heavy)).foregroundStyle(DB.ink)
+                    Text(pinnedFacts(l).ifEmpty(" ")).font(.caption).foregroundStyle(DB.sub).lineLimit(1)
+                    HStack(spacing: 6) {
+                        if let full = listing, full.isSpaceReady {
+                            Button {
+                                viewer = ViewerRoute(listing: full)
+                            } label: {
+                                Label("3D 보기", systemImage: "cube.fill")
+                            }
+                            .buttonStyle(.dbPill(filled: true))
+                        }
+                        if let id = l.listingId {
+                            Button("매물 보기") { navigate(.listing(id)) }
+                                .buttonStyle(.dbPill())
+                        }
+                    }
+                    .padding(.top, 3)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(DB.group)
+            .overlay(alignment: .bottom) { Rectangle().fill(DB.line).frame(height: 1) }
+        }
+    }
+
+    /// "상도동 · 원룸 · 2층 · 관리비 5만"
+    private func pinnedFacts(_ l: ChatListing) -> String {
+        var parts: [String] = []
+        if let loc = l.location { parts.append(Fmt.dong(loc)) }
+        parts.append(Fmt.roomType(l.roomType))
+        if let f = l.floor { parts.append(Fmt.floorLabel(f)) }
+        if let fee = listing?.maintenanceFee { parts.append(fee == 0 ? "관리비 없음" : "관리비 \(fee)만") }
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// 이 매물을 올린 사람(중개사 · 집주인)이 보는 채팅이면 질문 칩을 숨긴다
+    private var isListingOwner: Bool {
+        guard let me = session.userId, let owner = listing?.agent?.userId else { return false }
+        return me == owner
+    }
+
+    /// 첫 메시지 부담을 줄이는 질문 칩 (누르면 입력칸에 채워지고, 고쳐서 보낼 수 있다)
+    static let quickQuestions = ["실제 구조가 3D랑 같나요?", "관리비에 뭐가 포함돼요?", "방 보러 가도 될까요?",
+                                 "입주 날짜 조정되나요?", "주차 되나요?"]
 
     private var header: some View {
         Button {
@@ -199,41 +274,63 @@ struct ChatRoomView: View {
     }
 
     private var inputBar: some View {
-        HStack(spacing: 8) {
-            Button {} label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(DB.field, in: Circle())
+        VStack(spacing: 8) {
+            if !isListingOwner && text.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Self.quickQuestions, id: \.self) { q in
+                            Button { text = q } label: {
+                                Text(q)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(DB.accent)
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 6)
+                                    .background(DB.accentSoft, in: Capsule())
+                                    .overlay(Capsule().stroke(DB.accentLine))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
             }
-            .disabled(true)
-            .foregroundStyle(DB.sub)
-            .accessibilityLabel("첨부 (준비 중)")
+            HStack(spacing: 8) {
+                Button {} label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .background(DB.field, in: Circle())
+                }
+                .disabled(true)
+                .foregroundStyle(DB.sub)
+                .accessibilityLabel("첨부 (준비 중)")
 
-            TextField("메시지 보내기", text: $text, axis: .vertical)
-                .lineLimit(1...4)
-                .font(.subheadline)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(DB.field, in: RoundedRectangle(cornerRadius: 18))
-
-            Button {
-                Task { await send() }
-            } label: {
-                Text("전송")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.white)
+                TextField("메시지 보내기", text: $text, axis: .vertical)
+                    .lineLimit(1...4)
+                    .font(.subheadline)
                     .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .background(canSend ? DB.purple : DB.purple.opacity(0.35), in: Capsule())
+                    .padding(.vertical, 9)
+                    .background(DB.field, in: RoundedRectangle(cornerRadius: 18))
+
+                Button {
+                    Task { await send() }
+                } label: {
+                    Text("전송")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(canSend ? DB.accent : DB.accent.opacity(0.35), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
             }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
+            .padding(.horizontal, 12)
         }
-        .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.white)
     }
+
 
     private func isMine(_ m: ChatMessage) -> Bool {
         guard let me = session.userId, let sender = m.senderId else { return false }
@@ -271,27 +368,78 @@ struct ChatRoomView: View {
     }
 }
 
+/// 말풍선 (+ 같은 사람이 같은 분에 보낸 묶음의 마지막에만 보낸 시각)
 struct MessageBubble: View {
     let message: ChatMessage
     let mine: Bool
+    var time: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            if mine {
-                Spacer(minLength: 60)
-            } else {
+            if !mine {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.system(size: 30))
                     .foregroundStyle(DB.faint)
             }
-            Text(message.message)
-                .font(.subheadline)
-                .foregroundStyle(mine ? Color.white : DB.ink)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(mine ? DB.purple : DB.field, in: RoundedRectangle(cornerRadius: 14))
-                .opacity(message.messageId.hasPrefix("local-") ? 0.6 : 1)
-            if !mine { Spacer(minLength: 60) }
+            HStack(alignment: .bottom, spacing: 6) {
+                if mine {
+                    Spacer(minLength: 50)
+                    if let time { timeLabel(time) }
+                }
+                Text(message.message)
+                    .font(.subheadline)
+                    .foregroundStyle(mine ? Color.white : DB.ink)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(mine ? DB.accent : DB.field, in: RoundedRectangle(cornerRadius: 14))
+                    .opacity(message.messageId.hasPrefix("local-") ? 0.6 : 1)
+                if !mine {
+                    if let time { timeLabel(time) }
+                    Spacer(minLength: 50)
+                }
+            }
         }
+    }
+
+    private func timeLabel(_ t: String) -> some View {
+        Text(t).font(.caption2).foregroundStyle(DB.faint).fixedSize()
+    }
+}
+
+/// 채팅방 말풍선 배치: 날짜가 바뀌면 구분선, 같은 사람이 같은 분에 연달아 보낸 말풍선은 마지막에만 시각을 붙인다
+enum ChatTimeline {
+    enum Item: Identifiable, Equatable {
+        case day(String)
+        case message(ChatMessage, time: String?)
+
+        var id: String {
+            switch self {
+            case .day(let d): return "day-" + d
+            case .message(let m, _): return m.id
+            }
+        }
+    }
+
+    static func items(_ messages: [ChatMessage], now: Date = Date(), calendar: Calendar = .current) -> [Item] {
+        var out: [Item] = []
+        var lastDay: String?
+        let dates = messages.map { Fmt.parseDate($0.sentAt) }
+        for (i, m) in messages.enumerated() {
+            guard let date = dates[i] else {
+                out.append(.message(m, time: nil))          // 보낸 시각을 모르면 구분선 · 시각 없이
+                continue
+            }
+            let day = Fmt.chatDay(date, now: now, calendar: calendar)
+            if day != lastDay {
+                out.append(.day(day))
+                lastDay = day
+            }
+            var sameGroupNext = false
+            if i + 1 < messages.count, messages[i + 1].senderId == m.senderId, let next = dates[i + 1] {
+                sameGroupNext = calendar.isDate(next, equalTo: date, toGranularity: .minute)
+            }
+            out.append(.message(m, time: sameGroupNext ? nil : Fmt.chatClock(date, calendar: calendar)))
+        }
+        return out
     }
 }

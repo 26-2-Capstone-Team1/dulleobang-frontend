@@ -45,6 +45,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UIRequiredDeviceCapabilities: [arkit]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true       # 세로 고정 앱 — 'All interface orientations must be supported' 경고 끄기
         NSCameraUsageDescription: 매물 공간과 가구를 3D 로 만들기 위해 카메라로 촬영합니다.
         NSLocalNetworkUsageDescription: 같은 Wi-Fi 의 개발 서버에 촬영 데이터를 올리기 위해 로컬 네트워크에 접속합니다.
         NSAppTransportSecurity:

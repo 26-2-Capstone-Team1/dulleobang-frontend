@@ -12,6 +12,7 @@ final class RoomPlanController: NSObject, ObservableObject, RoomCaptureViewDeleg
     weak var view: RoomCaptureView?
     /// 스캔 중 RoomPlan 이 가구 상자를 고칠 때마다 (메인 스레드) → 가구 전체 사진 점검 (CaptureRecorder.updateFurniture)
     var onFurniture: (([FurnitureBox]) -> Void)?
+    var onWalls: (([CoverageWall]) -> Void)?                     // 스캔 중 벽 갱신 (벽 · 바닥 커버리지)
 
     static var isSupported: Bool { RoomCaptureSession.isSupported }
 
@@ -54,7 +55,11 @@ final class RoomPlanController: NSObject, ObservableObject, RoomCaptureViewDeleg
     // RoomCaptureSessionDelegate — RoomCaptureView 의 화면 안내는 그대로 두고 스캔 중 결과만 받는다 (Apple 예제와 같은 방식)
     func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
         let boxes = RoomPlanExport.furniture(from: room)
-        DispatchQueue.main.async { [weak self] in self?.onFurniture?(boxes) }
+        let walls = RoomPlanExport.coverageWalls(from: room)
+        DispatchQueue.main.async { [weak self] in
+            self?.onFurniture?(boxes)
+            self?.onWalls?(walls)
+        }
     }
 }
 
@@ -94,6 +99,13 @@ enum RoomPlanExport {
         room.objects.map { o in
             FurnitureBox(id: o.identifier.uuidString, category: String(describing: o.category),
                          transform: o.transform, dimensions: o.dimensions)
+        }
+    }
+
+    /// 벽 · 바닥 커버리지용 벽 (스캔 중 결과 · 최종 결과 같은 변환)
+    static func coverageWalls(from room: CapturedRoom) -> [CoverageWall] {
+        room.walls.map { s in
+            CoverageWall(id: s.identifier.uuidString, transform: s.transform, width: s.dimensions.x, height: s.dimensions.y)
         }
     }
 

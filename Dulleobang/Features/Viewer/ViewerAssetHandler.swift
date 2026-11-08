@@ -22,18 +22,19 @@ final class ViewerAssetHandler: NSObject, WKURLSchemeHandler {
         let id = ObjectIdentifier(task)
         let registry = self.registry
         registry.clear(id)
+        let ref = SchemeTaskRef(raw: task)
 
         if url.path == "/" || url.path == "/index.html" {
             serveIndex(task, url: url)
             return
         }
         guard let file = Self.resolve(url.path) else {
-            Self.respond(task, id, url: url, status: 404, mime: "text/plain", length: 0, registry: registry)
-            Self.finish(task, id, registry: registry)
+            Self.respond(ref, id, url: url, status: 404, mime: "text/plain", length: 0, registry: registry)
+            Self.finish(ref, id, registry: registry)
             return
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            Self.stream(file, task: task, id: id, url: url, registry: registry)
+            Self.stream(file, task: ref, id: id, url: url, registry: registry)
         }
     }
 
@@ -62,16 +63,17 @@ final class ViewerAssetHandler: NSObject, WKURLSchemeHandler {
     /// index.html 의 %%IMPORTMAP%% 를 채운다: vendor/ 에 로컬 사본이 있으면 그것(오프라인 시연용), 없으면 CDN.
     private func serveIndex(_ task: any WKURLSchemeTask, url: URL) {
         let id = ObjectIdentifier(task)
+        let ref = SchemeTaskRef(raw: task)
         guard let file = Self.resolve("/index.html"), var html = try? String(contentsOf: file, encoding: .utf8) else {
-            Self.respond(task, id, url: url, status: 404, mime: "text/plain", length: 0, registry: registry)
-            Self.finish(task, id, registry: registry)
+            Self.respond(ref, id, url: url, status: 404, mime: "text/plain", length: 0, registry: registry)
+            Self.finish(ref, id, registry: registry)
             return
         }
         html = html.replacingOccurrences(of: "%%IMPORTMAP%%", with: Self.importMap())
         let data = Data(html.utf8)
-        Self.respond(task, id, url: url, status: 200, mime: "text/html", length: data.count, registry: registry)
-        Self.send(task, id, data, registry: registry)
-        Self.finish(task, id, registry: registry)
+        Self.respond(ref, id, url: url, status: 200, mime: "text/html", length: data.count, registry: registry)
+        Self.send(ref, id, data, registry: registry)
+        Self.finish(ref, id, registry: registry)
     }
 
     nonisolated static func importMap() -> String {
@@ -94,7 +96,7 @@ final class ViewerAssetHandler: NSObject, WKURLSchemeHandler {
 
     // MARK: - 스트리밍 (백그라운드에서 읽고, WKURLSchemeTask 호출은 메인 스레드에서)
 
-    nonisolated private static func stream(_ file: URL, task: any WKURLSchemeTask, id: ObjectIdentifier,
+    nonisolated private static func stream(_ file: URL, task: SchemeTaskRef, id: ObjectIdentifier,
                                            url: URL, registry: StopRegistry) {
         guard let h = try? FileHandle(forReadingFrom: file) else {
             respond(task, id, url: url, status: 500, mime: "text/plain", length: 0, registry: registry)
@@ -111,35 +113,35 @@ final class ViewerAssetHandler: NSObject, WKURLSchemeHandler {
             DispatchQueue.main.async {
                 defer { window.signal() }
                 guard !registry.isStopped(id) else { return }
-                MainActor.assumeIsolated { task.didReceive(data) }
+                MainActor.assumeIsolated { task.raw.didReceive(data) }
             }
         }
         finish(task, id, registry: registry)
     }
 
     // stop 이후에 task 메서드를 부르면 예외가 나므로 매번 확인한다
-    nonisolated private static func respond(_ task: any WKURLSchemeTask, _ id: ObjectIdentifier, url: URL,
+    nonisolated private static func respond(_ task: SchemeTaskRef, _ id: ObjectIdentifier, url: URL,
                                             status: Int, mime: String, length: Int, registry: StopRegistry) {
         let headers = ["Content-Type": mime, "Content-Length": String(length),
                        "Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"]
         let resp = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
         DispatchQueue.main.async {
             guard !registry.isStopped(id) else { return }
-            MainActor.assumeIsolated { task.didReceive(resp) }
+            MainActor.assumeIsolated { task.raw.didReceive(resp) }
         }
     }
 
-    nonisolated private static func send(_ task: any WKURLSchemeTask, _ id: ObjectIdentifier, _ data: Data,
+    nonisolated private static func send(_ task: SchemeTaskRef, _ id: ObjectIdentifier, _ data: Data,
                                          registry: StopRegistry) {
         DispatchQueue.main.async {
             guard !registry.isStopped(id) else { return }
-            MainActor.assumeIsolated { task.didReceive(data) }
+            MainActor.assumeIsolated { task.raw.didReceive(data) }
         }
     }
 
-    nonisolated private static func finish(_ task: any WKURLSchemeTask, _ id: ObjectIdentifier, registry: StopRegistry) {
+    nonisolated private static func finish(_ task: SchemeTaskRef, _ id: ObjectIdentifier, registry: StopRegistry) {
         DispatchQueue.main.async {
-            if !registry.isStopped(id) { MainActor.assumeIsolated { task.didFinish() } }
+            if !registry.isStopped(id) { MainActor.assumeIsolated { task.raw.didFinish() } }
             registry.clear(id)
         }
     }
@@ -156,6 +158,10 @@ final class ViewerAssetHandler: NSObject, WKURLSchemeHandler {
         }
     }
 }
+
+/// WKURLSchemeTask 는 Sendable 표시가 없어서 스레드 사이로 넘기면 경고가 난다.
+/// 실제 호출은 늘 메인 스레드(MainActor.assumeIsolated)에서만 하므로 상자에 담아 넘긴다.
+private struct SchemeTaskRef: @unchecked Sendable { let raw: any WKURLSchemeTask }
 
 /// 중단된 요청 목록 (스레드 안전)
 final class StopRegistry: @unchecked Sendable {
