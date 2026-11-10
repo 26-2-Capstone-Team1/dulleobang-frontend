@@ -116,6 +116,64 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertNil(APIError(status: 500, body: "Internal Server Error").serverMessage)
         XCTAssertTrue(APIError(status: 404, body: "").isMissingEndpoint)
     }
+
+    /// 둘러방 서버의 오류 응답(problem+json): "code" 와 "detail" 에 같은 코드가 온다
+    private func problem(_ code: String, _ status: Int) -> APIError {
+        APIError(status: status, body: #"{"type":"urn:dulleobang:problem:x","title":"Error","status":\#(status),"detail":"\#(code)","instance":"/api/x","code":"\#(code)","requestId":"r1","errors":[]}"#)
+    }
+
+    func testServerCodeIsNotShownAsMessage() {
+        let e = problem("INVALID_CREDENTIALS", 401)
+        XCTAssertEqual(e.serverCode, "INVALID_CREDENTIALS")
+        XCTAssertNil(e.serverMessage)                                   // 코드는 사람이 읽을 문구가 아니다
+        XCTAssertEqual(e.displayMessage, "이메일 또는 비밀번호가 맞지 않습니다.")
+        XCTAssertEqual((e as Error).userMessage, e.displayMessage)
+        XCTAssertTrue(APIError.looksLikeCode("RESOURCE_NOT_FOUND"))
+        XCTAssertFalse(APIError.looksLikeCode("Not Found"))
+        XCTAssertFalse(APIError.looksLikeCode("주소를 입력해 주세요"))
+        XCTAssertFalse(APIError.looksLikeCode("OK"))
+        // 예전 서버처럼 문구를 보내면 그대로 보여 준다
+        XCTAssertNil(APIError(status: 400, body: #"{"message": "주소를 입력해 주세요"}"#).serverCode)
+        XCTAssertEqual(APIError(status: 400, body: #"{"message": "주소를 입력해 주세요"}"#).displayMessage, "주소를 입력해 주세요 (400)")
+    }
+
+    func testServerErrorMessages() {
+        // 앱 · 서버 쪽 문제는 코드를 붙여 보여 준다
+        XCTAssertTrue(problem("INTERNAL_ERROR", 500).displayMessage.hasSuffix("(INTERNAL_ERROR)"))
+        XCTAssertTrue(problem("INVALID_CAPTURE_ZIP", 422).displayMessage.hasPrefix("촬영 파일을"))
+        // 모르는 코드는 상태 번호로 고른 문구 + 코드
+        XCTAssertEqual(problem("SOME_NEW_CODE", 429).displayMessage, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요. (SOME_NEW_CODE · 429)")
+        // 코드도 문구도 없는 응답
+        XCTAssertEqual(APIError(status: 503, body: "<html>").displayMessage, "서버에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요. (503)")
+        XCTAssertEqual(APIError(status: 404, body: "").displayMessage, "요청한 정보를 찾을 수 없습니다. (404)")
+        // 두 표에 같은 코드가 있으면 안 된다
+        XCTAssertTrue(Set(ServerErrorText.forUser.keys).isDisjoint(with: Set(ServerErrorText.toReport.keys)))
+        for (code, text) in ServerErrorText.forUser.merging(ServerErrorText.toReport, uniquingKeysWith: { a, _ in a }) {
+            XCTAssertTrue(APIError.looksLikeCode(code), code)
+            XCTAssertFalse(text.isEmpty, code)
+        }
+    }
+
+    func testValidationHintReplacesGenericMessage() {
+        let hint = "메시지는 1000자까지 보낼 수 있습니다."
+        XCTAssertEqual((problem("VALIDATION_FAILED", 422) as Error).validationAwareMessage(hint: hint), hint)
+        XCTAssertEqual((problem("EMPTY_MESSAGE", 422) as Error).validationAwareMessage(hint: hint), "메시지 내용을 입력해 주세요.")
+    }
+
+    func testJobFailureMessage() throws {
+        let failed = try decode(AIJob.self, #"{"jobId": "j1", "status": "FAILED", "progress": 40, "message": "AI worker lease expired.", "error": {"code": "WORKER_TIMEOUT", "message": "AI worker lease expired.", "retryable": true}}"#)
+        XCTAssertTrue(failed.isFailed)
+        XCTAssertEqual(failed.failureMessage, ServerErrorText.jobFailure["WORKER_TIMEOUT"])
+        // 모르는 원인 코드 · 원인이 없는 응답은 서버가 보낸 message 그대로
+        let unknown = try decode(AIJob.self, #"{"jobId": "j2", "status": "FAILED", "message": "실패", "error": {"code": "NEW_REASON", "message": "x", "retryable": false}}"#)
+        XCTAssertEqual(unknown.failureMessage, "실패")
+        let running = try decode(AIJob.self, #"{"jobId": 3, "status": "RUNNING", "progress": 10, "error": null}"#)
+        XCTAssertNil(running.error)
+        XCTAssertNil(running.failureMessage)
+        // error 가 문자열로 와도 작업 상태를 읽는다
+        let text = try decode(AIJob.self, #"{"jobId": "j4", "status": "FAILED", "error": "실패했습니다"}"#)
+        XCTAssertEqual(text.error?.message, "실패했습니다")
+    }
 }
 
 final class FormattingTests: XCTestCase {

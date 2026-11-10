@@ -309,7 +309,7 @@ final class CaptureFlowModel: ObservableObject {
         } catch is CancellationError {
             // 화면을 닫음 — 업로드가 끝났다면 서버 작업은 계속된다
         } catch {
-            phase = .failed("업로드 실패: \(error.localizedDescription)\n촬영 파일은 기기에 남아 있어 다시 시도할 수 있습니다.")
+            phase = .failed("업로드 실패: \(error.userMessage)\n촬영 파일은 기기에 남아 있어 다시 시도할 수 있습니다.")
         }
     }
 
@@ -319,7 +319,7 @@ final class CaptureFlowModel: ObservableObject {
             let pct = j.percent.map { " \($0)%" } ?? ""
             self?.phase = .processing("AI 처리 중 (\(j.status))\(pct)")
         }
-        phase = job.isDone ? .done : .failed(job.message ?? "AI 처리에 실패했습니다")
+        phase = job.isDone ? .done : .failed(job.failureMessage ?? "AI 처리에 실패했습니다")
     }
 
     // MARK: 0.5× 광각 사진 (촬영을 마친 뒤)
@@ -402,7 +402,7 @@ final class CaptureFlowModel: ObservableObject {
                 try await waitJob(acc.jobId)
             } catch is CancellationError {
             } catch {
-                phase = .failed("업로드 실패: \(error.localizedDescription)")
+                phase = .failed("업로드 실패: \(error.userMessage)")
             }
         }
     }

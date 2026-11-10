@@ -367,7 +367,7 @@ final class SpaceViewerModel: ObservableObject {
                     self?.progress = j.progress.map { $0 / 100 }
                 }
                 progress = nil
-                guard job.isDone else { throw ViewerError(job.message ?? "입주 예상 공간을 만들지 못했습니다") }
+                guard job.isDone else { throw ViewerError(job.failureMessage ?? "입주 예상 공간을 만들지 못했습니다") }
                 rs = try await RoomStateAPI.get(rsId)
             }
             guard rs.isReady else { throw ViewerError("입주 예상 공간을 만들지 못했습니다. ‘가구 빼 보기’로 다시 만들어 주세요") }

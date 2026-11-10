@@ -751,7 +751,7 @@ struct ListingRegisterView: View {
         } catch {
             stage = nil
             progress = nil
-            if !error.isCancellation { self.error = error.userMessage + "\n‘이어서 등록하기’로 다시 시도할 수 있습니다." }
+            if !error.isCancellation { self.error = error.validationAwareMessage(hint: "입력한 값 중 서버가 받지 못하는 것이 있습니다. 주소는 200자까지이고, 월세 매물은 월세가 1만원 이상이어야 합니다. 금액 · 층 · 방 수도 확인해 주세요.") + "\n‘이어서 등록하기’로 다시 시도할 수 있습니다." }
         }
     }
 }

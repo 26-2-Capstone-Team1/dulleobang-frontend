@@ -5,17 +5,203 @@ struct APIError: LocalizedError {
     let body: String
     var errorDescription: String? { "HTTP \(status): \(body.prefix(200))" }
 
-    /// 서버가 보낸 오류 문구 ({"message": "..."} / {"error": "..."} / {"detail": "..."}) 가 있으면 꺼낸다
-    var serverMessage: String? {
+    /// 오류 응답 본문 (JSON 객체일 때)
+    private var json: [String: Any]? {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else { return nil }
-        for k in ["message", "error", "detail", "reason"] {
-            if let s = obj[k] as? String, !s.isEmpty { return s }
+        return obj
+    }
+
+    /// 대문자 · 숫자 · 밑줄로만 된 값은 사람이 읽을 문구가 아니라 오류 코드다: "RESOURCE_NOT_FOUND"
+    static func looksLikeCode(_ s: String) -> Bool {
+        let scalars = s.unicodeScalars
+        guard scalars.count >= 3, let first = scalars.first, first.value >= 65, first.value <= 90 else { return false }
+        for u in scalars {
+            let v = u.value
+            let upper = v >= 65 && v <= 90          // A–Z
+            let digit = v >= 48 && v <= 57          // 0–9
+            if !(upper || digit || v == 95) { return false }        // _
+        }
+        return true
+    }
+
+    /// 서버가 보낸 오류 코드. 둘러방 서버(problem+json)는 "code" 와 "detail" 에 같은 코드를 넣는다: "RESOURCE_NOT_FOUND"
+    var serverCode: String? {
+        guard let obj = json else { return nil }
+        for k in ["code", "detail", "error", "message", "reason"] {
+            if let s = obj[k] as? String, APIError.looksLikeCode(s) { return s }
         }
         return nil
     }
 
+    /// 서버가 보낸 사람이 읽을 문구 ({"message": "..."} / {"error": "..."} / {"detail": "..."}) 가 있으면 꺼낸다.
+    /// 오류 코드처럼 생긴 값은 문구가 아니므로 건너뛴다 (serverCode 로 읽는다)
+    var serverMessage: String? {
+        guard let obj = json else { return nil }
+        for k in ["message", "error", "detail", "reason"] {
+            if let s = obj[k] as? String, !s.isEmpty, !APIError.looksLikeCode(s) { return s }
+        }
+        return nil
+    }
+
+    /// 화면에 보여 줄 한국어 문구. 아는 코드는 표에서 찾고, 모르는 코드는 상태 번호로 고른 문구 뒤에 코드를 붙인다
+    var displayMessage: String {
+        if let code = serverCode {
+            if let text = ServerErrorText.forUser[code] { return text }
+            if let text = ServerErrorText.toReport[code] { return "\(text) (\(code))" }
+            return "\(ServerErrorText.byStatus(status)) (\(code) · \(status))"
+        }
+        if let m = serverMessage { return "\(m) (\(status))" }
+        return "\(ServerErrorText.byStatus(status)) (\(status))"
+    }
+
     /// 아직 서버에 없는 API 로 보이는 응답 (앱이 로컬 동작으로 대신할 때 쓴다)
     var isMissingEndpoint: Bool { [404, 405, 501].contains(status) }
+}
+
+/// 서버 오류 코드 → 화면에 보여 줄 한국어 문구 (코드 목록: 백엔드 spring-boot-v2 의 ApiException · GlobalExceptionHandler)
+enum ServerErrorText {
+    private static let appFault = "앱이 보낸 요청을 서버가 받지 못했습니다. 다시 시도해 보고, 계속되면 이 문구를 개발팀에 알려 주세요."
+    private static let captureFault = "촬영 파일을 서버가 읽지 못했습니다. 다시 촬영해 보고, 계속되면 이 문구를 개발팀에 알려 주세요."
+    private static let serverBusy = "서버가 잠시 응답하지 못하고 있습니다. 잠시 후 다시 시도해 주세요."
+    private static let changedElsewhere = "그 사이 다른 곳에서 내용이 바뀌었습니다. 새로 불러온 뒤 다시 시도해 주세요."
+
+    /// 쓰는 사람이 직접 해결할 수 있는 오류: 문구만 보여 준다
+    static let forUser: [String: String] = [
+        // 로그인 · 가입
+        "INVALID_CREDENTIALS": "이메일 또는 비밀번호가 맞지 않습니다.",
+        "EMAIL_ALREADY_EXISTS": "이미 가입된 이메일입니다. 로그인해 주세요.",
+        "INVALID_REFRESH_TOKEN": "로그인이 만료되었습니다. 다시 로그인해 주세요.",
+        "TOKEN_REUSED": "보안을 위해 로그아웃되었습니다. 다시 로그인해 주세요.",
+        "UNAUTHORIZED": "로그인을 확인하지 못했습니다. 다시 시도해 보고, 계속되면 다시 로그인해 주세요.",
+        "INVALID_OAUTH_TOKEN": "소셜 로그인을 확인하지 못했습니다. 다시 로그인해 주세요.",
+        "OAUTH_NOT_CONFIGURED": "이 서버에서는 소셜 로그인을 쓸 수 없습니다. 이메일로 로그인해 주세요.",
+        "OAUTH_PROVIDER_UNAVAILABLE": "소셜 로그인 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        "RATE_LIMIT_EXCEEDED": "요청이 너무 많습니다. 1분쯤 뒤에 다시 시도해 주세요.",
+        // 권한 · 없는 대상
+        "FORBIDDEN": "이 작업을 할 권한이 없습니다.",
+        "RESOURCE_NOT_FOUND": "찾을 수 없습니다. 삭제되었거나 비공개로 바뀌었을 수 있습니다.",
+        "VALIDATION_FAILED": "입력한 내용 중 서버가 받지 못하는 값이 있습니다. 글자 수와 숫자 범위를 확인해 주세요.",
+        // 매물
+        "INVALID_AREA": "공급면적은 전용면적보다 작을 수 없습니다.",
+        "INVALID_FLOOR": "해당층은 건물 전체 층수보다 높을 수 없습니다.",
+        "INVALID_PRICE": "월세 매물은 월세를 1만원 이상으로, 전세 매물은 월세를 0으로 입력해 주세요.",
+        "INVALID_LOCATION": "주소를 입력해 주세요.",
+        "LOCATION_COORDINATES_REQUIRED": "주소의 위치를 찾지 못했습니다. 도로명 주소나 지번 주소로 다시 입력해 주세요.",
+        "INVALID_STATE": "종료된 매물이라 이 작업을 할 수 없습니다.",
+        "SELF_REPORT_FORBIDDEN": "내가 올린 매물은 신고할 수 없습니다.",
+        // 채팅
+        "SELF_CHAT_FORBIDDEN": "내가 올린 매물에는 채팅을 열 수 없습니다.",
+        "CHAT_LISTING_UNAVAILABLE": "매물이 내려가서 이 채팅에는 더 이상 메시지를 보낼 수 없습니다.",
+        "EMPTY_MESSAGE": "메시지 내용을 입력해 주세요.",
+        // 중개사 인증 · 사진
+        "VERIFICATION_PENDING": "이미 중개사 인증을 신청해 심사 중입니다. 결과를 기다려 주세요.",
+        "INVALID_IMAGE": "사진을 읽을 수 없습니다. 다른 사진을 골라 주세요.",
+        "INVALID_IMAGE_DIMENSIONS": "사진 크기가 맞지 않습니다. 가로 640 · 세로 480픽셀 이상인 사진을 골라 주세요.",
+        "CONTENT_TYPE_MISMATCH": "사진 형식을 확인하지 못했습니다. 다른 사진을 골라 주세요.",
+        "BODY_TOO_LARGE": "보내는 파일이 너무 큽니다. 사진은 한 장에 20MB까지 올릴 수 있습니다.",
+        "UPLOAD_LIMIT_EXCEEDED": "올릴 수 없는 크기의 파일이 있습니다. 사진은 한 장에 20MB까지 올릴 수 있습니다.",
+        // 촬영 · 3D 생성
+        "CAPTURE_ZIP_TOO_LARGE": "촬영 파일이 너무 큽니다. 더 짧게 다시 촬영해 주세요.",
+        "ACTIVE_JOB_EXISTS": "이미 3D 생성이 진행 중입니다. 끝난 뒤에 다시 시도해 주세요.",
+        "ACTIVE_JOB_LIMIT": "3D 생성은 한 번에 3개까지 진행할 수 있습니다. 진행 중인 작업이 끝난 뒤에 다시 시도해 주세요.",
+        // 3D 공간 · 가구 구분 · 배치
+        "SPACE_NOT_READY": "이 매물은 아직 3D 공간이 준비되지 않았습니다.",
+        "ROOM_STATE_NOT_READY": "입주 예상 공간이 아직 준비되지 않았습니다.",
+        "STALE_SPACE_VERSION": "그 사이 공간이나 가구 구분이 바뀌었습니다. 새로 불러온 뒤 다시 시도해 주세요.",
+        "VERSION_MISMATCH": changedElsewhere,
+        "PRECONDITION_FAILED": changedElsewhere,
+        "OBJECT_NOT_REMOVABLE": "뺄 수 없는 가구가 들어 있습니다. 개인 가구만 뺄 수 있습니다.",
+        "UNKNOWN_OBJECT": "목록에 없는 가구가 들어 있습니다. 새로 불러온 뒤 다시 골라 주세요.",
+        "RESOURCE_IN_USE": "다른 곳에서 쓰고 있어 지울 수 없습니다.",
+        "FURNITURE_NOT_READY": "3D 모델이 아직 준비되지 않은 가구가 있습니다.",
+        "STALE_MODEL_VERSION": "가구의 3D 모델이 새로 만들어졌습니다. 가구를 다시 불러온 뒤 저장해 주세요.",
+        "PLACEMENT_NOT_FOUND": "저장한 배치가 없습니다.",
+    ]
+
+    /// 앱이나 서버 쪽 문제: 문구 뒤에 코드를 붙여 보여 준다 (그대로 개발팀에 전할 수 있게)
+    static let toReport: [String: String] = [
+        // 서버
+        "INTERNAL_ERROR": "서버에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.",
+        "DATABASE_UNAVAILABLE": serverBusy,
+        "STORAGE_UNAVAILABLE": serverBusy,
+        "IDEMPOTENCY_KEY_REUSED": "같은 요청이 다른 내용으로 다시 전송되었습니다. 다시 시도해 주세요.",
+        "INVALID_QUERY_PARAMETER": "검색 조건을 서버가 받지 못했습니다. 검색어를 줄이거나 지도를 확대해 보세요.",
+        // 요청 형식 (앱 쪽 문제)
+        "MALFORMED_JSON": appFault,
+        "BODY_REQUIRED": appFault,
+        "UNSUPPORTED_MEDIA_TYPE": appFault,
+        "NOT_ACCEPTABLE": appFault,
+        "METHOD_NOT_ALLOWED": appFault,
+        "IDEMPOTENCY_KEY_REQUIRED": appFault,
+        "INVALID_PARAMETER": appFault,
+        "UNKNOWN_QUERY_PARAMETER": appFault,
+        "DUPLICATE_QUERY_PARAMETER": appFault,
+        "AMBIGUOUS_QUERY_PARAMETER": appFault,
+        "INCOMPLETE_MAP_BOUNDS": appFault,
+        "INVALID_PRICE_FILTER": appFault,
+        "INVALID_RANGE": appFault,
+        "INVALID_CURSOR": appFault,
+        "INVALID_MULTIPART": appFault,
+        "DUPLICATE_FIELD": appFault,
+        "INVALID_UPLOAD_ROLE": appFault,
+        "INVALID_PRECONDITION": appFault,
+        "PRECONDITION_REQUIRED": appFault,
+        "DUPLICATE_ID": appFault,
+        "INVALID_ROTATION": appFault,
+        "INVALID_COLLISION_REPORT": appFault,
+        // 촬영 파일(capture.zip) 검사
+        "INVALID_CAPTURE_ZIP": captureFault,
+        "MISSING_CAPTURE_FILE": captureFault,
+        "DUPLICATE_ZIP_ENTRY": captureFault,
+        "UNSAFE_CAPTURE_ZIP": captureFault,
+        "UNSUPPORTED_ZIP_COMPRESSION": captureFault,
+        "INVALID_CAPTURE_FILES": captureFault,
+        "INVALID_CAPTURE_FILE_NAME": captureFault,
+        "INVALID_CAPTURE_JSON": captureFault,
+        "INVALID_CAPTURE_METADATA": captureFault,
+        "INVALID_CAPTURE_ORIGIN": captureFault,
+        "INVALID_CAMERA_POSE": captureFault,
+        "INVALID_TRACKING_STATE": captureFault,
+        "INVALID_FRAME_ORDER": captureFault,
+        "INVALID_DEPTH_REFERENCE": captureFault,
+        "INVALID_DEPTH_ENCODING": captureFault,
+        "INVALID_CONFIDENCE_REFERENCE": captureFault,
+        "INVALID_CONFIDENCE_VALUES": captureFault,
+        "INVALID_ROOMPLAN_JSON": captureFault,
+        "MANIFEST_IMAGE_MISMATCH": captureFault,
+        "UNREFERENCED_DEPTH_FILE": captureFault,
+        "INVALID_UPLOAD_SESSION": captureFault,
+    ]
+
+    /// 실패한 AI 작업의 원인 코드 (GET /ai-jobs/{jobId} 의 error.code) → 문구
+    static let jobFailure: [String: String] = [
+        "INSUFFICIENT_FRAMES": "촬영한 사진이 부족합니다. 더 천천히, 빠진 곳 없이 다시 촬영해 주세요.",
+        "TRACKING_UNSTABLE": "촬영 중 위치 추적이 불안정했습니다. 더 천천히 움직이며 다시 촬영해 주세요.",
+        "SCALE_UNRELIABLE": "공간의 크기를 정확히 재지 못했습니다. 다시 촬영해 주세요.",
+        "RECONSTRUCTION_FAILED": "3D 공간을 만들지 못했습니다. 다시 촬영해 주세요.",
+        "SEGMENTATION_FAILED": "가구를 구분하지 못했습니다. 다시 촬영해 주세요.",
+        "REMOVAL_FAILED": "가구를 뺀 공간을 만들지 못했습니다. 다시 시도해 주세요.",
+        "INVALID_ARTIFACT": "만들어진 3D 결과에 문제가 있어 쓸 수 없습니다. 다시 시도해 주세요.",
+        "WORKER_TIMEOUT": "AI 처리가 너무 오래 걸려 중단되었습니다. 잠시 후 다시 시도해 주세요.",
+        "DEPENDENCY_UNAVAILABLE": "AI 서버가 잠시 응답하지 않습니다. 잠시 후 다시 시도해 주세요.",
+        "INTERNAL_ERROR": "AI 처리 중 서버에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.",
+    ]
+
+    /// 표에 없는 코드 · 코드가 없는 응답은 상태 번호로 고른다
+    static func byStatus(_ status: Int) -> String {
+        switch status {
+        case 400, 415, 422: return "요청을 처리하지 못했습니다. 입력한 내용을 확인해 주세요."
+        case 401: return "로그인이 필요합니다. 다시 로그인해 주세요."
+        case 403: return "이 작업을 할 권한이 없습니다."
+        case 404: return "요청한 정보를 찾을 수 없습니다."
+        case 405, 501: return "아직 지원하지 않는 기능입니다."
+        case 409, 412, 428: return changedElsewhere
+        case 413: return "보내는 파일이 너무 큽니다."
+        case 429: return "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."
+        default:
+            return status >= 500 ? "서버에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요." : "요청을 처리하지 못했습니다."
+        }
+    }
 }
 
 struct Empty: Decodable {}

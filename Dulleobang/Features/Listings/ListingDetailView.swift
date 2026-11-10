@@ -508,7 +508,7 @@ struct ReportSheet: View {
             try await ListingAPI.report(listingId, reason: reason, detail: detail.trimmed.isEmpty ? nil : detail.trimmed)
             done = true
         } catch {
-            self.error = error.userMessage
+            self.error = error.validationAwareMessage(hint: "신고 내용은 1000자까지 입력할 수 있습니다.")
         }
     }
 }

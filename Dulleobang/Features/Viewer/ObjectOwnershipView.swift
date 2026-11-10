@@ -250,7 +250,7 @@ struct RoomStateCreateView: View {
             let job = try await JobAPI.wait(acc.jobId) { j in
                 phase = .processing("AI 처리 중\(j.percent.map { " \($0)%" } ?? "")")
             }
-            guard job.isDone else { throw ViewerError(job.message ?? "입주 예상 공간을 만들지 못했습니다") }
+            guard job.isDone else { throw ViewerError(job.failureMessage ?? "입주 예상 공간을 만들지 못했습니다") }
             guard let rsId = acc.roomStateId ?? job.roomStateId else {
                 throw ViewerError("완료됐지만 roomStateId 를 받지 못했습니다 (백엔드 응답 확인)")
             }

@@ -363,7 +363,7 @@ struct ChatRoomView: View {
         } catch {
             pending.removeAll { $0.id == local.id }
             text = body
-            self.error = "메시지를 보내지 못했습니다. " + error.userMessage
+            self.error = "메시지를 보내지 못했습니다. " + error.validationAwareMessage(hint: "메시지는 1000자까지 보낼 수 있습니다.")
         }
     }
 }

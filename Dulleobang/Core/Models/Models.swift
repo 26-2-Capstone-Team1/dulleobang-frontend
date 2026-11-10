@@ -20,13 +20,40 @@ struct Rotation: Codable, Hashable { var yaw: Double }
 
 struct BoundingBox: Codable, Hashable { var min: Vec3; var max: Vec3 }
 
+/// 실패한 AI 작업의 원인 (서버 JobFailure)
+struct JobFailure: Codable {
+    var code: String?
+    var message: String?
+    var retryable: Bool?
+
+    private enum CodingKeys: String, CodingKey { case code, message, retryable }
+
+    /// 객체 {code, message, retryable} 가 기본. 문구만 문자열로 주는 서버도 받고, 다른 형태면 비워 둔다 (작업 상태 조회가 깨지지 않게)
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(), let text = try? single.decode(String.self) {
+            message = text
+            return
+        }
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        code = try? c.decodeIfPresent(String.self, forKey: .code)
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+        retryable = try? c.decodeIfPresent(Bool.self, forKey: .retryable)
+    }
+}
+
 struct AIJob: Codable {
     @FlexibleID var jobId: String
     var status: String                 // QUEUED | RUNNING | RETRY_WAIT | COMPLETED | FAILED | CANCELED
     var progress: Double?              // 0–100
     var message: String?
     @FlexibleOptionalID var roomStateId: String? = nil     // ROOM_OBJECT_REMOVAL 완료 시
+    var error: JobFailure? = nil       // 실패 원인 {code, message, retryable}
     var isDone: Bool { status == "COMPLETED" }
+    /// 실패했을 때 보여 줄 문구: 아는 원인 코드는 한국어로, 아니면 서버가 보낸 message
+    var failureMessage: String? {
+        if let code = error?.code, let text = ServerErrorText.jobFailure[code] { return text }
+        return message
+    }
     /// 끝났지만 결과가 없는 상태 (취소도 여기에 넣어야 폴링이 멈춘다)
     var isFailed: Bool { status == "FAILED" || status == "CANCELED" }
     var percent: Int? { progress.map { Int($0.rounded()) } }

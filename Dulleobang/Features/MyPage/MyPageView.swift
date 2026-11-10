@@ -305,7 +305,7 @@ struct AgentVerifyView: View {
             self.error = e.userMessage
             #endif
         } catch {
-            self.error = error.userMessage
+            self.error = error.validationAwareMessage(hint: "이름과 등록번호는 80자, 사무소 이름은 150자까지 입력할 수 있습니다.")
         }
     }
 }

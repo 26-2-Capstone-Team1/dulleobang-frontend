@@ -118,7 +118,7 @@ struct FurnitureRegisterView: View {
             let res = try await FurnitureAPI.create(name: name.trimmingCharacters(in: .whitespaces), category: category)
             captureId = CaptureID(id: res.furnitureId)
         } catch {
-            self.error = error.userMessage
+            self.error = error.validationAwareMessage(hint: "가구 이름은 80자까지 입력할 수 있습니다.")
         }
     }
 }
