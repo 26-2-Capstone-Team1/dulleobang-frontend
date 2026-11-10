@@ -275,6 +275,14 @@ struct AgentVerifyView: View {
     private func loadDocument(_ item: PhotosPickerItem?) async {
         guard let item, let raw = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: raw) else { return }
         let scaled = img.downscaled(maxPixel: 2000)
+        // 서버는 가로 640 · 세로 480 픽셀보다 작은 사진을 받지 않는다 (INVALID_IMAGE_DIMENSIONS)
+        let w = scaled.size.width * scaled.scale, h = scaled.size.height * scaled.scale
+        if w < 640 || h < 480 {
+            docImage = nil
+            docData = nil
+            error = "사진이 너무 작습니다. 가로 640 · 세로 480픽셀 이상인 사진을 골라 주세요."
+            return
+        }
         docImage = scaled
         docData = scaled.jpegData(compressionQuality: 0.85)
     }
@@ -293,6 +301,11 @@ struct AgentVerifyView: View {
             if p.officeName == nil { p.officeName = office.trimmed }
             if p.documentName == nil { p.documentName = docName }
             session.setAgent(p)
+            navigate.replaceTop(.agentInfo)
+        } catch let e as APIError where e.serverCode == "VERIFICATION_PENDING" {
+            // 이미 신청해 심사 중 (앞서 보낸 신청의 응답만 못 받은 경우도 여기로 온다): 오류 대신 심사 중 화면으로
+            if let p = try? await UserAPI.agentProfile() { session.setAgent(p) }
+            session.toast = e.displayMessage
             navigate.replaceTop(.agentInfo)
         } catch let e as APIError where e.isMissingEndpoint {
             #if DEBUG

@@ -538,6 +538,8 @@ struct ChatRoomDetail: Codable {
     var counterpartName: String?
     var officeName: String?
     var messages: [ChatMessage]?
+    /// 매물이 내려가 더 이상 보낼 수 없는 채팅 (서버가 알려 줌)
+    var readOnly: Bool? = nil
 }
 
 struct OpenChatRequest: Codable { var listingId: String }

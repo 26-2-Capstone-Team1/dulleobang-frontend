@@ -31,7 +31,8 @@ struct ListingQuery: Hashable {
 
     var items: [URLQueryItem] {
         var q: [URLQueryItem] = []
-        if let t = text?.trimmed, !t.isEmpty { q.append(.init(name: "location", value: t)) }
+        // 서버는 검색어를 300자까지 받는다
+        if let t = text?.trimmed, !t.isEmpty { q.append(.init(name: "location", value: String(t.prefix(300)))) }
         if let dealType { q.append(.init(name: "dealType", value: dealType)) }
         if let roomType { q.append(.init(name: "roomType", value: roomType)) }
         if let maxDeposit { q.append(.init(name: "maxDeposit", value: String(maxDeposit))) }

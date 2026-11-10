@@ -62,27 +62,96 @@ struct ListingRegisterView: View {
         }
     }
 
-    /// 단계마다 꼭 필요한 칸 (나머지는 선택). nil = 다음으로 넘어가도 된다. buildRequest() 의 조건과 같다
+    /// 서버가 받는 범위 (백엔드 mobile-openapi 의 MobilecreateListing · ListingFieldsPolicy). 금액은 만원, 면적은 m²
+    enum Limits {
+        static let addressMax = 200
+        static let moneyMax = 100_000_000
+        static let floorRange = -10...200
+        static let totalFloorsRange = 1...200
+        static let roomsRange = 1...50
+        static let bathsRange = 0...30
+        static let areaRange = 0.1...10_000.0
+    }
+
+    /// 단계마다 확인할 칸. nil = 다음으로 넘어가도 된다. 서버가 거절하는 값은 여기서 먼저 막는다
+    /// (서버는 422 에서 어느 칸이 틀렸는지 알려 주지 않는다). 면적은 m² 로 바꾼 값(areaFactor 를 곱한 값)으로 본다
     static func problem(for step: Step, address: String, dealType: String, deposit: String, monthly: String,
-                        area: String) -> String? {
+                        area: String, fee: String = "", supply: String = "", areaFactor: Double = 1,
+                        floor: String = "", totalFloors: String = "", rooms: String = "", baths: String = "",
+                        photoCount: Int = 0) -> String? {
+        func intField(_ text: String) -> Int?? {          // nil = 비어 있음, .some(nil) = 숫자가 아님
+            let t = text.trimmed
+            return t.isEmpty ? nil : .some(Int(t))
+        }
         switch step {
         case .basics:
-            return address.trimmed.isEmpty ? "주소를 입력해 주세요" : nil
+            let a = address.trimmed
+            if a.isEmpty { return "주소를 입력해 주세요" }
+            if a.count > Limits.addressMax { return "주소는 \(Limits.addressMax)자까지 입력할 수 있습니다" }
+            return nil
         case .price:
-            if Int(deposit.trimmed) == nil { return "보증금을 숫자로 입력해 주세요 (만원)" }
-            if dealType == "MONTHLY" && Int(monthly.trimmed) == nil { return "월세를 숫자로 입력해 주세요 (만원)" }
+            guard let dep = Int(deposit.trimmed) else { return "보증금을 숫자로 입력해 주세요 (만원)" }
+            if dep < 0 || dep > Limits.moneyMax { return "보증금은 0 ~ 1억 만원 사이로 입력해 주세요" }
+            if dealType == "MONTHLY" {
+                guard let mon = Int(monthly.trimmed) else { return "월세를 숫자로 입력해 주세요 (만원)" }
+                if mon < 1 { return "월세 매물은 월세를 1만원 이상으로 입력해 주세요" }
+                if mon > Limits.moneyMax { return "월세가 너무 큽니다 (만원 단위로 입력해 주세요)" }
+            }
+            if let f = intField(fee) {
+                guard let f, f >= 0, f <= Limits.moneyMax else { return "관리비는 0 이상의 숫자로 입력해 주세요 (만원)" }
+            }
             return nil
         case .room:
             guard let a = Double(area.trimmed), a > 0 else { return "전용면적을 입력해 주세요" }
+            let areaM2 = a * areaFactor
+            if !Limits.areaRange.contains(areaM2) { return "전용면적이 너무 작거나 큽니다" }
+            let s = supply.trimmed
+            if !s.isEmpty {
+                guard let sv = Double(s), Limits.areaRange.contains(sv * areaFactor) else { return "공급면적을 숫자로 입력해 주세요" }
+                if sv < a { return "공급면적은 전용면적보다 작을 수 없습니다" }
+            }
+            let fl = intField(floor), tf = intField(totalFloors)
+            if let fl {
+                guard let fl, Limits.floorRange.contains(fl) else { return "해당층은 -10 ~ 200 사이 숫자로 입력해 주세요 (지하는 -1)" }
+            }
+            if let tf {
+                guard let tf, Limits.totalFloorsRange.contains(tf) else { return "건물층은 1 ~ 200 사이 숫자로 입력해 주세요" }
+            }
+            if let fl = fl ?? nil, let tf = tf ?? nil, fl > tf { return "해당층은 건물층보다 높을 수 없습니다" }
+            if let r = intField(rooms) {
+                guard let r, Limits.roomsRange.contains(r) else { return "방 수는 1 ~ 50 사이로 입력해 주세요" }
+            }
+            if let b = intField(baths) {
+                guard let b, Limits.bathsRange.contains(b) else { return "욕실 수는 0 ~ 30 사이로 입력해 주세요" }
+            }
             return nil
-        case .media, .review:
+        case .media:
+            // 둘러방 서버는 사진이 올라와야 매물을 공개한다 (사진 없는 매물은 세입자에게 보이지 않음)
+            return photoCount == 0 ? "사진을 한 장 이상 골라 주세요. 사진이 있어야 매물이 공개됩니다" : nil
+        case .review:
             return nil
         }
+    }
+
+    /// 지금 입력값으로 step 단계를 확인한다
+    private func problem(at step: Step) -> String? {
+        Self.problem(for: step, address: address, dealType: dealType, deposit: deposit, monthly: monthly,
+                     area: areaText, fee: fee, supply: supplyText, areaFactor: areaUnit == .pyeong ? 3.3058 : 1,
+                     floor: floorText, totalFloors: totalFloorsText, rooms: roomsText, baths: bathsText,
+                     photoCount: selectedOrder.count)
     }
 
     private var isSubmitting: Bool { stage != nil }
     private var canSubmit: Bool {
         !isSubmitting && (createdId != nil || buildRequest() != nil)
+    }
+
+    /// 등록 전에 모든 단계를 다시 확인한다 (앞 단계로 돌아가 값을 바꾼 경우). 첫 문제가 있는 단계와 이유
+    private func firstProblem() -> (Step, String)? {
+        for s in Step.allCases where s != .review {
+            if let p = problem(at: s) { return (s, p) }
+        }
+        return nil
     }
 
     var body: some View {
@@ -315,8 +384,8 @@ struct ListingRegisterView: View {
                 InfoRow(label: "공간 촬영", value: captureSummary)
                 InfoRow(label: "사진", value: selectedOrder.isEmpty ? "없음" : "\(selectedOrder.count)장")
             }
-            if captured == nil && selectedOrder.isEmpty {
-                Label("사진도 공간 촬영도 없으면 세입자에게 사진 없이 보여요", systemImage: "exclamationmark.triangle.fill")
+            if selectedOrder.isEmpty && createdId == nil {
+                Label("사진이 없으면 매물이 공개되지 않아요. 사진을 한 장 이상 골라 주세요", systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Color.orange)
             }
@@ -662,8 +731,7 @@ struct ListingRegisterView: View {
 
     /// 지금 단계에서 꼭 필요한 칸을 확인하고 다음 단계로
     private func next() {
-        if let p = Self.problem(for: step, address: address, dealType: dealType, deposit: deposit, monthly: monthly,
-                                area: areaText) {
+        if let p = problem(at: step) {
             stepHint = p
             return
         }
@@ -707,15 +775,25 @@ struct ListingRegisterView: View {
         do {
             // 1) 매물 정보 (이미 만들었으면 건너뜀)
             if createdId == nil {
+                if let found = firstProblem() {
+                    go(to: found.0)
+                    stepHint = found.1
+                    return
+                }
                 guard var req = buildRequest() else {
                     error = "주소 · 가격 · 면적을 확인해 주세요"
                     return
                 }
                 stage = "주소 위치 확인 중"
-                if let c = await Geocoder.shared.coordinate(for: req.location) {
-                    req.latitude = c.latitude
-                    req.longitude = c.longitude
+                guard let c = await Geocoder.shared.coordinate(for: req.location) else {
+                    // 서버는 좌표 없는 매물을 받지 않는다 (LOCATION_COORDINATES_REQUIRED)
+                    stage = nil
+                    go(to: .basics)
+                    stepHint = "주소의 위치를 찾지 못했습니다. 도로명 주소나 지번 주소로 다시 입력해 주세요"
+                    return
                 }
+                req.latitude = c.latitude
+                req.longitude = c.longitude
                 stage = "매물 정보 등록 중"
                 createdId = try await ListingAPI.create(req).listingId
             }

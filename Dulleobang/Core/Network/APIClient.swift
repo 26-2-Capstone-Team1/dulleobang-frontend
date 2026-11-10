@@ -54,8 +54,12 @@ struct APIError: LocalizedError {
         return "\(ServerErrorText.byStatus(status)) (\(status))"
     }
 
-    /// 아직 서버에 없는 API 로 보이는 응답 (앱이 로컬 동작으로 대신할 때 쓴다)
-    var isMissingEndpoint: Bool { [404, 405, 501].contains(status) }
+    /// 아직 서버에 없는 API 로 보이는 응답 (앱이 로컬 동작으로 대신할 때 쓴다).
+    /// 둘러방 서버의 404 RESOURCE_NOT_FOUND 는 대상(매물 등)이 없다는 뜻이라 여기에 넣지 않는다
+    var isMissingEndpoint: Bool {
+        if status == 404 { return serverCode != "RESOURCE_NOT_FOUND" }
+        return [405, 501].contains(status)
+    }
 }
 
 /// 서버 오류 코드 → 화면에 보여 줄 한국어 문구 (코드 목록: 백엔드 spring-boot-v2 의 ApiException · GlobalExceptionHandler)

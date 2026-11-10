@@ -45,10 +45,12 @@ struct ListingDetailView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("신고하기", systemImage: "exclamationmark.bubble") { showReport = true }
-                } label: {
-                    Image(systemName: "ellipsis")
+                if !isOwner {           // 내가 올린 매물은 신고할 수 없다 (서버 SELF_REPORT_FORBIDDEN)
+                    Menu {
+                        Button("신고하기", systemImage: "exclamationmark.bubble") { showReport = true }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
                 }
             }
         }
@@ -505,7 +507,12 @@ struct ReportSheet: View {
         busy = true
         defer { busy = false }
         do {
-            try await ListingAPI.report(listingId, reason: reason, detail: detail.trimmed.isEmpty ? nil : detail.trimmed)
+            let text = detail.trimmed
+            if text.utf16.count > 1000 {
+                self.error = "신고 내용은 1000자까지 입력할 수 있습니다. (지금 \(text.count)자)"
+                return
+            }
+            try await ListingAPI.report(listingId, reason: reason, detail: text.isEmpty ? nil : text)
             done = true
         } catch {
             self.error = error.validationAwareMessage(hint: "신고 내용은 1000자까지 입력할 수 있습니다.")

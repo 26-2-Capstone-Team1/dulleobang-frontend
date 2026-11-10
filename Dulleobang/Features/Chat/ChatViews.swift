@@ -131,7 +131,11 @@ struct ChatRoomView: View {
     @State private var viewer: ViewerRoute?
 
     private var allMessages: [ChatMessage] { messages + pending }
-    private var canSend: Bool { !text.trimmed.isEmpty }
+    private var isReadOnly: Bool { detail?.readOnly == true }
+    /// 서버는 메시지를 1000자까지 받는다 (UTF-16 단위로 세어 넉넉히 맞춘다)
+    private static let maxMessage = 1000
+    private var tooLong: Bool { text.trimmed.utf16.count > Self.maxMessage }
+    private var canSend: Bool { !text.trimmed.isEmpty && !isReadOnly && !tooLong }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -275,7 +279,7 @@ struct ChatRoomView: View {
 
     private var inputBar: some View {
         VStack(spacing: 8) {
-            if !isListingOwner && text.isEmpty {
+            if !isListingOwner && text.isEmpty && !isReadOnly {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(Self.quickQuestions, id: \.self) { q in
@@ -294,6 +298,17 @@ struct ChatRoomView: View {
                     .padding(.horizontal, 12)
                 }
             }
+            if isReadOnly {
+                Label("매물이 내려가 더 이상 메시지를 보낼 수 없습니다", systemImage: "lock.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DB.sub)
+                    .padding(.horizontal, 12)
+            } else if tooLong {
+                Text("메시지는 \(Self.maxMessage)자까지 보낼 수 있습니다")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DB.danger)
+                    .padding(.horizontal, 12)
+            }
             HStack(spacing: 8) {
                 Button {} label: {
                     Image(systemName: "plus")
@@ -305,8 +320,9 @@ struct ChatRoomView: View {
                 .foregroundStyle(DB.sub)
                 .accessibilityLabel("첨부 (준비 중)")
 
-                TextField("메시지 보내기", text: $text, axis: .vertical)
+                TextField(isReadOnly ? "보낼 수 없는 채팅입니다" : "메시지 보내기", text: $text, axis: .vertical)
                     .lineLimit(1...4)
+                    .disabled(isReadOnly)
                     .font(.subheadline)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
@@ -351,7 +367,7 @@ struct ChatRoomView: View {
 
     private func send() async {
         let body = text.trimmed
-        guard !body.isEmpty else { return }
+        guard !body.isEmpty, !isReadOnly, body.utf16.count <= Self.maxMessage else { return }
         text = ""
         let local = ChatMessage(messageId: "local-\(UUID().uuidString)", senderId: session.userId, senderName: session.name,
                                 message: body, sentAt: Fmt.nowISO())

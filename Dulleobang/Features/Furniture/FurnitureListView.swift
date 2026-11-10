@@ -57,8 +57,14 @@ struct FurnitureRow: View {
             }
             Spacer()
             if !furniture.isReady {
-                Label(furniture.status == "FAILED" ? "실패" : "3D 생성 중", systemImage: furniture.status == "FAILED" ? "exclamationmark.triangle" : "hourglass")
-                    .font(.caption).foregroundStyle(furniture.status == "FAILED" ? .red : .orange)
+                switch furniture.status {
+                case "FAILED":
+                    Label("실패", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                case "DRAFT":           // 등록만 하고 아직 촬영을 올리지 않음
+                    Label("촬영 전", systemImage: "camera").font(.caption).foregroundStyle(.secondary)
+                default:
+                    Label("3D 생성 중", systemImage: "hourglass").font(.caption).foregroundStyle(.orange)
+                }
             }
         }
     }
@@ -83,7 +89,13 @@ struct FurnitureRegisterView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("이름") { TextField("예: 자취방 침대 (슈퍼싱글)", text: $name) }
+                Section {
+                    TextField("예: 자취방 침대 (슈퍼싱글)", text: $name)
+                } header: { Text("이름") } footer: {
+                    if name.trimmingCharacters(in: .whitespaces).count > 80 {
+                        Text("가구 이름은 80자까지 입력할 수 있습니다").foregroundStyle(.red)
+                    }
+                }
                 Section("종류") {
                     Picker("종류", selection: $category) {
                         ForEach(Self.categories.indices, id: \.self) { i in
@@ -96,7 +108,8 @@ struct FurnitureRegisterView: View {
                     Button { Task { await submit() } } label: {
                         HStack { Spacer(); if saving { ProgressView() } else { Text("등록하고 가구 촬영하기") }; Spacer() }
                     }
-                    .disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty
+                              || name.trimmingCharacters(in: .whitespaces).count > 80)
                 } footer: {
                     Text("가구 전체가 보이게 1~2 m 떨어져서 한 바퀴 돌며 촬영합니다. 실제 크기는 휴대폰의 이동 거리로 자동 계산됩니다.")
                 }

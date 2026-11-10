@@ -649,7 +649,46 @@ final class AppScreenTests: XCTestCase {
         XCTAssertNil(V.problem(for: .price, address: "", dealType: "JEONSE", deposit: "25000", monthly: "", area: ""))
         XCTAssertNotNil(V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "0"))
         XCTAssertNil(V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "23.5"))
-        XCTAssertNil(V.problem(for: .media, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: ""), "사진 · 촬영은 선택")
+        // 둘러방 서버는 사진이 있어야 매물을 공개한다
+        XCTAssertNotNil(V.problem(for: .media, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: ""))
+        XCTAssertNil(V.problem(for: .media, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "", photoCount: 1))
+    }
+
+    /// 서버가 거절하는 값(422)은 다음 단계로 넘어가기 전에 막는다
+    func testRegisterStepsFollowServerLimits() {
+        typealias V = ListingRegisterView
+        func price(_ deal: String, _ dep: String, _ mon: String, fee: String = "") -> String? {
+            V.problem(for: .price, address: "", dealType: deal, deposit: dep, monthly: mon, area: "", fee: fee)
+        }
+        XCTAssertNotNil(price("MONTHLY", "500", "0"), "월세 0 은 서버가 거절")
+        XCTAssertNil(price("MONTHLY", "500", "1"))
+        XCTAssertNotNil(price("MONTHLY", "-1", "30"))
+        XCTAssertNotNil(price("MONTHLY", "500", "30", fee: "-5"))
+        XCTAssertNotNil(price("MONTHLY", "500", "30", fee: "5만"))
+        XCTAssertNil(price("JEONSE", "25000", "", fee: "10"))
+        func room(_ area: String, supply: String = "", factor: Double = 1, floor: String = "", total: String = "",
+                  rooms: String = "1", baths: String = "1") -> String? {
+            V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: area, supply: supply,
+                      areaFactor: factor, floor: floor, totalFloors: total, rooms: rooms, baths: baths)
+        }
+        XCTAssertNil(room("23.5", supply: "30", floor: "3", total: "5"))
+        XCTAssertNotNil(room("23.5", supply: "20"), "공급면적 < 전용면적")
+        XCTAssertNotNil(room("23.5", floor: "6", total: "5"), "해당층 > 건물층")
+        XCTAssertNil(room("23.5", floor: "-1", total: "5"), "지하층")
+        XCTAssertNotNil(room("23.5", total: "0"))
+        XCTAssertNotNil(room("23.5", rooms: "0"))
+        XCTAssertNotNil(room("23.5", baths: "31"))
+        XCTAssertNotNil(room("0.02"), "0.1 m² 미만")
+        XCTAssertNil(room("7", factor: 3.3058), "7평")
+        XCTAssertNotNil(V.problem(for: .basics, address: String(repeating: "가", count: 201), dealType: "MONTHLY",
+                                  deposit: "", monthly: "", area: ""))
+    }
+
+    /// 둘러방 서버의 404 RESOURCE_NOT_FOUND 는 "API 가 없음" 이 아니라 "대상이 없음"
+    func testMissingEndpointReading() {
+        XCTAssertTrue(APIError(status: 404, body: "").isMissingEndpoint)
+        XCTAssertTrue(APIError(status: 501, body: "").isMissingEndpoint)
+        XCTAssertFalse(APIError(status: 404, body: #"{"status":404,"detail":"RESOURCE_NOT_FOUND","code":"RESOURCE_NOT_FOUND"}"#).isMissingEndpoint)
     }
 }
 

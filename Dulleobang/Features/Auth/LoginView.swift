@@ -161,6 +161,7 @@ struct EmailAuthSheet: View {
     @State private var error: String?
 
     static let passwordRange = 12...128
+    static let nameRange = 1...40           // 서버 SignupRequest.displayName
 
     private var emailOK: Bool { let e = email.trimmed; return e.contains("@") && e.contains(".") }
     private var passwordOK: Bool { Self.passwordRange.contains(password.count) }
@@ -168,7 +169,7 @@ struct EmailAuthSheet: View {
         guard emailOK, !busy else { return false }
         switch mode {
         case .login: return !password.isEmpty
-        case .signup: return passwordOK && password == passwordAgain && !name.trimmed.isEmpty && terms && privacy
+        case .signup: return passwordOK && password == passwordAgain && Self.nameRange.contains(name.trimmed.count) && terms && privacy
         }
     }
 

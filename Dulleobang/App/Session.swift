@@ -207,7 +207,11 @@ final class Session: ObservableObject {
             var back = favoriteIds
             if on { back.remove(id) } else { back.insert(id) }
             setFavorites(back)
-            toast = "관심 매물을 저장하지 못했습니다"
+            if let e = error as? APIError, e.serverCode == "RESOURCE_NOT_FOUND" {
+                toast = "내려간 매물이라 관심 매물에 담을 수 없습니다"
+            } else {
+                toast = "관심 매물을 저장하지 못했습니다"
+            }
         }
     }
 
