@@ -67,7 +67,7 @@ XcodeGen 을 안 쓰면: 새 iOS App 프로젝트(SwiftUI) 를 만들고 `Dulleo
 **기본으로 켜져 있습니다.** 앱이 서버 대신 `Core/Mock/MockBackend` 에 요청을 보내고, 백엔드와 같은 경로·JSON 을 돌려줍니다.
 화면·디코딩 코드는 실제 서버와 똑같이 동작하므로, 백엔드가 준비되면 **설정 › 데모 모드 › 데모 데이터 사용** 을 끄기만 하면 됩니다.
 데모 모드를 끄면 기본으로 팀 GCP 서버 `https://34.47.87.3/api` 에 연결합니다 (`AppConfig.defaultBaseURL` 한 곳, 설정 › 백엔드 서버에서 바꾸거나 **기본 서버로** 로 되돌림).
-2026-11-19 HTTPS 로 바꿨습니다(예전 `http://34.47.87.3:8080/api` 도 백엔드가 닫을 때까지 같은 서버). 주소를 직접 넣을 때 `http://34.47.87.3/api` 처럼 http 로 넣으면 로그인만 되고 나머지가 401 이 나니 https 로 넣으세요. ATS 예외(`NSAllowsArbitraryLoads`)는 같은 Wi-Fi 의 http 개발 서버 때문에 아직 둡니다.
+2026-11-19 HTTPS 로 바꿨습니다(예전 `http://34.47.87.3:8080/api` 는 같은 날 백엔드가 닫았습니다). 주소를 직접 넣을 때 `http://34.47.87.3/api` 처럼 http 로 넣으면 로그인만 되고 나머지가 401 이 나니 https 로 넣으세요. ATS 예외(`NSAllowsArbitraryLoads`)는 같은 Wi-Fi 의 http 개발 서버 때문에 아직 둡니다.
 서버 VM 이 꺼져 있거나 백엔드 앱이 아직 안 올라가 있으면 "서버에 연결할 수 없습니다" 가 나오니, 그동안은 데모 모드를 켜 두세요.
 홈 로고 옆의 초록 **데모** 표시를 누르면 바로 설정으로 갑니다.
 
@@ -366,6 +366,7 @@ s = 256 / pose["width"]; fx, fy, cx, cy = (pose["K"][k] * s for k in ("fx", "fy"
 | POST | `/auth/oauth/kakao` · `/auth/oauth/google` | 카카오 `{accessToken}` · 구글 `{idToken}` (SDK 가 준 토큰, 서버가 검증) | `TokenPair` |
 | POST | `/auth/refresh` | `{refreshToken}` | `TokenPair` (refresh 토큰도 매번 새로) · 만료 401 → 앱이 로그아웃 |
 | POST | `/auth/logout` | `{refreshToken}` | `204` |
+| DELETE | `/users/me` | (로그인 토큰) | 회원 탈퇴: 계정과 계정에 딸린 매물 · 3D 파일 · 채팅을 지운다 · 토큰 없으면 401 (11.19 배포) |
 | GET | `/users/me/agent-profile` | | `{status: PENDING\|APPROVED\|REJECTED, name, licenseNumber, officeName, documentName, rejectReason?}` · 신청 전 404 |
 | POST | `/users/me/agent-profile` | multipart: `name, licenseNumber, officeName, documentName, document`(이미지) | `AgentProfile` |
 | GET | `/users/me/listings` | | `[Listing]` |

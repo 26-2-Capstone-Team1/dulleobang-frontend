@@ -81,7 +81,7 @@ private struct MyPageContent: View {
             Button("탈퇴하기", role: .destructive) { Task { await deleteAccount() } }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("계정과 계정에 딸린 정보가 서버에서 삭제되고 되돌릴 수 없습니다.")
+            Text("계정과 내가 올린 매물 · 3D 파일 · 채팅이 서버에서 모두 삭제되고 되돌릴 수 없습니다.")
         }
         .errorAlert($error)
     }
