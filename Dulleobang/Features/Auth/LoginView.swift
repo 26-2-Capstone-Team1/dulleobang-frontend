@@ -161,6 +161,7 @@ struct EmailAuthSheet: View {
     @State private var error: String?
 
     static let passwordRange = 12...128
+    static let nameRange = 1...40           // 서버 SignupRequest.displayName
 
     private var emailOK: Bool { let e = email.trimmed; return e.contains("@") && e.contains(".") }
     private var passwordOK: Bool { Self.passwordRange.contains(password.count) }
@@ -168,7 +169,7 @@ struct EmailAuthSheet: View {
         guard emailOK, !busy else { return false }
         switch mode {
         case .login: return !password.isEmpty
-        case .signup: return passwordOK && password == passwordAgain && !name.trimmed.isEmpty && terms && privacy
+        case .signup: return passwordOK && password == passwordAgain && Self.nameRange.contains(name.trimmed.count) && terms && privacy
         }
     }
 
@@ -243,7 +244,9 @@ struct EmailAuthSheet: View {
             self.error = "이미 가입된 이메일입니다. 로그인해 주세요."
             mode = .login
         } catch {
-            self.error = error.userMessage
+            self.error = error.validationAwareMessage(hint: mode == .signup
+                ? "이메일 형식을 확인해 주세요. 비밀번호는 12~128자, 이름은 40자까지 쓸 수 있습니다."
+                : "이메일 형식과 비밀번호를 확인해 주세요.")
         }
     }
 }

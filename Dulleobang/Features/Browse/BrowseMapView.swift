@@ -204,8 +204,9 @@ private struct BrowseMapContent: View {
     static func bounds(for r: MKCoordinateRegion, padding: Double = 0.25) -> GeoBounds {
         let halfLat = r.span.latitudeDelta / 2 * (1 + padding)
         let halfLng = r.span.longitudeDelta / 2 * (1 + padding)
-        return GeoBounds(minLat: r.center.latitude - halfLat, maxLat: r.center.latitude + halfLat,
-                         minLng: r.center.longitude - halfLng, maxLng: r.center.longitude + halfLng)
+        // 서버는 위도 -90~90, 경도 -180~180 밖의 값을 받지 않는다 (지도를 아주 멀리 축소했을 때)
+        return GeoBounds(minLat: max(-90, r.center.latitude - halfLat), maxLat: min(90, r.center.latitude + halfLat),
+                         minLng: max(-180, r.center.longitude - halfLng), maxLng: min(180, r.center.longitude + halfLng))
     }
 
     /// 화면을 7×7 격자로 나눠 같은 칸의 매물을 하나로 묶는다

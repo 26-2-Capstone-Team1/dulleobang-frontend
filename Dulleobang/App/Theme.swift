@@ -750,14 +750,7 @@ extension Error {
     }
 
     var userMessage: String {
-        if let api = self as? APIError {
-            if let m = api.serverMessage { return "\(m) (\(api.status))" }
-            switch api.status {
-            case 401, 403: return "권한이 없습니다. 다시 로그인해 주세요. (\(api.status))"
-            case 404: return "요청한 정보를 찾을 수 없습니다. (404)"
-            default: return "서버 오류 (\(api.status)): \(api.body.prefix(120))"
-            }
-        }
+        if let api = self as? APIError { return api.displayMessage }
         if let url = self as? URLError {
             switch url.code {
             case .cannotConnectToHost, .cannotFindHost, .timedOut, .notConnectedToInternet, .networkConnectionLost:
@@ -767,6 +760,12 @@ extension Error {
         }
         if let d = self as? DecodingError { return "서버 응답 형식이 예상과 다릅니다: " + Self.describe(d) }
         return localizedDescription
+    }
+
+    /// 서버는 422 VALIDATION_FAILED 에서 어느 칸이 틀렸는지 알려 주지 않는다. 그래서 화면이 자기 칸의 규칙(hint)을 대신 알려 준다
+    func validationAwareMessage(hint: String) -> String {
+        if let api = self as? APIError, api.serverCode == "VALIDATION_FAILED" { return hint }
+        return userMessage
     }
 
     private static func describe(_ e: DecodingError) -> String {
