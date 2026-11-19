@@ -1,5 +1,5 @@
 {
- "seedVersion": 3,
+ "seedVersion": 4,
  "agents": [
   {
    "userId": "9001",
@@ -21,6 +21,45 @@
   }
  ],
  "listings": [
+  {
+   "listing": {
+    "listingId": "113",
+    "location": "서울 동작구 상도동 실측하우스 301호",
+    "price": {
+     "deposit": 1000,
+     "monthly": 65
+    },
+    "dealType": "MONTHLY",
+    "maintenanceFee": 7,
+    "roomType": "ONE_ROOM",
+    "floor": 3,
+    "totalFloors": 5,
+    "area": 24.5,
+    "supplyArea": 31.2,
+    "rooms": 1,
+    "bathrooms": 1,
+    "availableFrom": "IMMEDIATE",
+    "rentalOptions": [
+     "aircon",
+     "fridge",
+     "closet"
+    ],
+    "thumbnailUri": "bundle://Mock/L13_1.jpg",
+    "imageUris": [
+     "bundle://Mock/L13_1.jpg",
+     "bundle://Mock/L13_2.jpg",
+     "bundle://Mock/bath_2.jpg"
+    ],
+    "latitude": 37.5034,
+    "longitude": 126.9486,
+    "livingEnvironment": "실제 방을 LiDAR 로 촬영해 만든 3D 예시 매물이에요. ‘3D 공간 둘러보기’에서 촬영한 방을 그대로 볼 수 있어요. 상도역 도보 6분.",
+    "space3DInfo": {
+     "status": "COMPLETED"
+    }
+   },
+   "ownerId": "9002",
+   "rank": 0
+  },
   {
    "listing": {
     "listingId": "101",
@@ -530,6 +569,87 @@
   }
  ],
  "spaces": {
+  "113": {
+   "meshUri": "bundle://Mock/room_pr2.glb",
+   "roomGeometry": {
+    "floorHeight": -1.458,
+    "ceilingHeight": 2.233,
+    "walls": [
+     {
+      "id": "113-wall-1",
+      "from": [
+       -0.031,
+       -2.964
+      ],
+      "to": [
+       2.303,
+       -1.548
+      ],
+      "height": 2.233
+     },
+     {
+      "id": "113-wall-2",
+      "from": [
+       2.303,
+       -1.548
+      ],
+      "to": [
+       0.699,
+       1.095
+      ],
+      "height": 2.233
+     },
+     {
+      "id": "113-wall-3",
+      "from": [
+       0.699,
+       1.095
+      ],
+      "to": [
+       -1.635,
+       -0.321
+      ],
+      "height": 2.233
+     },
+     {
+      "id": "113-wall-4",
+      "from": [
+       -1.635,
+       -0.321
+      ],
+      "to": [
+       -0.031,
+       -2.964
+      ],
+      "height": 2.233
+     }
+    ],
+    "doors": [],
+    "windows": [],
+    "boundingBox": {
+     "min": {
+      "x": -1.635,
+      "y": -1.458,
+      "z": -2.964
+     },
+     "max": {
+      "x": 2.303,
+      "y": 0.775,
+      "z": 1.095
+     }
+    }
+   },
+   "roomDimensions": {
+    "width": 2.73,
+    "depth": 3.09,
+    "height": 2.23,
+    "area": 8.44
+   },
+   "objects": [],
+   "glass": [],
+   "spaceVersion": 1,
+   "objectsVersion": 1
+  },
   "101": {
    "roomGeometry": {
     "floorHeight": 0.0,
