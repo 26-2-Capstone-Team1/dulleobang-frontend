@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UIKit
 
 /// walk = 1인칭(방 안에서 둘러보기), overview = 평면뷰(위에서 내려다보기, 기울여 입체로도 볼 수 있음)
 enum ViewMode: String { case walk, overview }
@@ -51,6 +52,39 @@ struct FurniturePayload: Encodable {
     let kind: String?
 }
 
+/// 가구마다 방 안에서 그 가구를 비춘 작은 그림 (objectId → 그림, 노란 상자가 그 가구).
+/// 같은 종류가 둘 이상이면(수납장 2개) 가구 구분 · 가구 빼기 목록에서 이름만으로는 어느 것인지 몰라서 붙인다 (11.19).
+/// 뷰어(DV.objectShots)가 장면을 연 뒤 찍어 보내고, 장면을 다시 열면 지운다
+@MainActor
+final class ObjectShots: ObservableObject {
+    @Published private(set) var images: [String: UIImage] = [:]
+    private var takingSince: Date?
+
+    /// 찍어 달라고 한 뒤 아직 안 왔다 (8초가 지나면 다시 부탁할 수 있다)
+    var isTaking: Bool {
+        get { takingSince.map { Date().timeIntervalSince($0) < 8 } ?? false }
+        set { takingSince = newValue ? Date() : nil }
+    }
+
+    func reset() {
+        images = [:]
+        takingSince = nil
+    }
+
+    /// data:image/jpeg;base64,… → 그림
+    func set(_ urls: [String: String]) {
+        var out: [String: UIImage] = [:]
+        for (id, url) in urls {
+            guard let comma = url.firstIndex(of: ","),
+                  let data = Data(base64Encoded: String(url[url.index(after: comma)...])),
+                  let image = UIImage(data: data) else { continue }
+            out[id] = image
+        }
+        images = out
+        takingSince = nil
+    }
+}
+
 /// 3D 탐색 + 입주 상태 + 가구 배치 화면의 상태와 규칙. 충돌 판정은 여기서(CollisionChecker) 하고 JS 는 색만 칠한다.
 @MainActor
 final class SpaceViewerModel: ObservableObject {
@@ -89,8 +123,13 @@ final class SpaceViewerModel: ObservableObject {
     private var pendingCarry: [PlacedItem]?
 
     let viewer = ViewerController()
+    /// 가구 사진 (가구 구분 · 가구 빼기 목록)
+    let shots = ObjectShots()
+    private var shotsWanted = false
     private(set) var room: Room?
     private var names: [String: String] = [:]
+    /// 가구 이름. 같은 이름이 둘 이상이면 번호를 붙인다 (수납장 1 · 수납장 2, 3D 라벨과 같음)
+    var objectNames: [String: String] { Fmt.objectNames(objects) }
     private var initialPlacements: [Placement]?
 
     init(listingId: String, state: RoomStateKind = .current, initialPlacements: [Placement]? = nil) {
@@ -155,7 +194,8 @@ final class SpaceViewerModel: ObservableObject {
             self.room = room
             removedIds = removed
             objects = space.objects
-            names = Dictionary(space.objects.map { ($0.objectId, Fmt.objectLabel($0.category)) }, uniquingKeysWith: { a, _ in a })
+            names = Fmt.objectNames(space.objects)
+            shots.reset()                               // 장면을 새로 여니 가구 사진도 새로 찍는다
             dimensionsText = Self.dimensionsText(space.roomDimensions, room)
 
             let prog: @Sendable (Double) -> Void = { [weak self] p in Task { @MainActor in self?.progress = p } }
@@ -242,7 +282,14 @@ final class SpaceViewerModel: ObservableObject {
     private func handle(_ ev: ViewerEvent) {
         switch ev {
         case .ready: break
-        case .loaded: loading = nil; progress = nil
+        case .loaded:
+            loading = nil
+            progress = nil
+            if shotsWanted {
+                shotsWanted = false
+                requestShots()
+            }
+        case .objectShots(let urls): shots.set(urls)
         case .progress(let v): progress = v
         case .error(let m): error = m; loading = nil
         case .meshFailed(let m):
@@ -379,6 +426,19 @@ final class SpaceViewerModel: ObservableObject {
         return d
     }
 
+    // MARK: - 가구 사진
+
+    /// 가구 구분 · 가구 빼기를 열 때 부른다. 이 장면에서 아직 안 찍었으면 뷰어에 찍어 달라고 한다 (장면을 여는 중이면 다 연 뒤에)
+    func requestShots() {
+        guard !objects.isEmpty, shots.images.isEmpty, !shots.isTaking else { return }
+        guard loading == nil else {
+            shotsWanted = true
+            return
+        }
+        shots.isTaking = true
+        viewer.call("objectShots", [String](), 480, 360)
+    }
+
     // MARK: - 가구 구분 (중개사) · 가구 빼 보기 (모두)
 
     /// 가구 구분 화면에서 고르는 대로 3D 테두리 색만 바꿔 보여 준다 (저장 전)
@@ -409,8 +469,8 @@ final class SpaceViewerModel: ObservableObject {
             spaceVersion = space.spaceVersion
             objectsVersion = space.objectsVersion
             objects = space.objects
+            names.merge(Fmt.objectNames(space.objects)) { _, new in new }
             for o in space.objects {
-                names[o.objectId] = Fmt.objectLabel(o.category)
                 viewer.call("setObjectOwnership", o.objectId, o.ownershipType ?? "")
             }
             if var r = room {

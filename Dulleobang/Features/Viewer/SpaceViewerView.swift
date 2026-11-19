@@ -99,6 +99,8 @@ struct SpaceViewerView: View {
             }
             if route.openRemoval && canRemoveAny && !showFurniturePicker { showRemoval = true }
         }
+        .onChange(of: showOwnership) { _, on in if on { model.requestShots() } }     // 가구 사진은 목록을 열 때 찍는다
+        .onChange(of: showRemoval) { _, on in if on { model.requestShots() } }
         .onChange(of: model.unavailableRoomStateId) { _, dead in
             // 열 수 없는 입주 상태(실패 · 삭제됨)면 버튼 대상을 다시 찾는다
             guard let dead, dead == myRoomStateId else { return }
@@ -116,6 +118,7 @@ struct SpaceViewerView: View {
         }
         .sheet(isPresented: $showOwnership, onDismiss: { model.restoreOwnershipColors() }) {
             ObjectOwnershipView(listingId: model.listingId, objects: model.objects, objectsVersion: model.objectsVersion,
+                                names: model.objectNames, shots: model.shots,
                                 onPreview: { id, type in model.previewOwnership(id, type) },
                                 onSaved: {
                                     model.toast = "가구 구분을 저장했습니다"
@@ -129,6 +132,7 @@ struct SpaceViewerView: View {
         .sheet(isPresented: $showRemoval) {
             RoomStateCreateView(listingId: model.listingId, objects: model.objects,
                                 spaceVersion: model.spaceVersion, objectsVersion: model.objectsVersion,
+                                names: model.objectNames, shots: model.shots,
                                 onPreview: { ids in model.previewRemoval(ids) },
                                 onCreated: { rsId in myRoomStateId = rsId },      // 닫아도 "입주 예상 보기"로 이어서 볼 수 있게
                                 onReady: { rsId in

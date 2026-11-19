@@ -12,17 +12,23 @@ struct ObjectOwnershipView: View {
     let onPreview: (String, String?) -> Void            // 3D 뷰어 색 미리보기
     let onSaved: () -> Void
     let onStale: (String) -> Void                       // 그 사이 다른 곳에서 구분이 바뀜(412) → 닫고 새로 불러온다
+    let names: [String: String]                         // 가구 이름 (같은 이름이 둘이면 번호: 수납장 1 · 수납장 2)
+    @ObservedObject var shots: ObjectShots              // 가구마다 방 안에서 비춘 그림
 
     @State private var objects: [SceneObject]
     @State private var saving = false
     @State private var error: String?
+    @State private var zoom: ShotZoom?
     @Environment(\.dismiss) private var dismiss
 
     init(listingId: String, objects: [SceneObject], objectsVersion: Int?,
+         names: [String: String], shots: ObjectShots,
          onPreview: @escaping (String, String?) -> Void, onSaved: @escaping () -> Void,
          onStale: @escaping (String) -> Void) {
         self.listingId = listingId
         self.objectsVersion = objectsVersion
+        self.names = names
+        _shots = ObservedObject(wrappedValue: shots)
         self.onPreview = onPreview
         self.onSaved = onSaved
         self.onStale = onStale
@@ -41,11 +47,14 @@ struct ObjectOwnershipView: View {
             List {
                 Section {
                     ForEach($objects) { $obj in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(Fmt.objectLabel(obj.category)).font(.subheadline.weight(.semibold))
-                                Spacer()
-                                Text(Fmt.dims(obj.dimensions)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 12) {
+                                ObjectShotThumb(image: shots.images[obj.objectId]) { showZoom(obj) }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(name(obj)).font(.subheadline.weight(.semibold))
+                                    Text(Fmt.dims(obj.dimensions)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
                             }
                             Picker("구분", selection: $obj.ownershipType) {
                                 Text("미분류").tag(String?.none)
@@ -88,7 +97,14 @@ struct ObjectOwnershipView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
             .errorAlert($error)
+            .sheet(item: $zoom) { z in ObjectShotZoomView(zoom: z) }
         }
+    }
+
+    private func name(_ o: SceneObject) -> String { names[o.objectId] ?? Fmt.objectLabel(o.category) }
+
+    private func showZoom(_ o: SceneObject) {
+        if let image = shots.images[o.objectId] { zoom = ShotZoom(id: o.objectId, name: name(o), image: image) }
     }
 
     private func save() async {
@@ -122,7 +138,10 @@ struct RoomStateCreateView: View {
     let onCreated: (String) -> Void                     // 서버가 받은 직후의 roomStateId (아직 만드는 중)
     let onReady: (String) -> Void                       // 완성된 roomStateId
     let onStale: (String) -> Void                       // 그 사이 구분 · 공간이 바뀜(409) → 뷰어가 다시 불러온다
+    let names: [String: String]
+    @ObservedObject var shots: ObjectShots
 
+    @State private var zoom: ShotZoom?
     @State private var selected: Set<String>
     @State private var phase: Phase = .editing
     @State private var error: String?
@@ -133,9 +152,12 @@ struct RoomStateCreateView: View {
     enum Phase: Equatable { case editing, sending, processing(String) }
 
     init(listingId: String, objects: [SceneObject], spaceVersion: Int?, objectsVersion: Int?,
+         names: [String: String], shots: ObjectShots,
          onPreview: @escaping ([String]?) -> Void, onCreated: @escaping (String) -> Void,
          onReady: @escaping (String) -> Void, onStale: @escaping (String) -> Void) {
         self.listingId = listingId
+        self.names = names
+        _shots = ObservedObject(wrappedValue: shots)
         self.objects = objects
         self.spaceVersion = spaceVersion
         self.objectsVersion = objectsVersion
@@ -161,21 +183,26 @@ struct RoomStateCreateView: View {
                 } else {
                     Section {
                         ForEach(removable) { o in
-                            Button {
-                                if selected.contains(o.objectId) { selected.remove(o.objectId) } else { selected.insert(o.objectId) }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: selected.contains(o.objectId) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selected.contains(o.objectId) ? DB.accent : Color.secondary)
-                                        .font(.title3)
-                                    Text(Fmt.objectLabel(o.category)).font(.subheadline.weight(.semibold))
-                                    Spacer()
-                                    Text(Fmt.dims(o.dimensions)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            HStack(spacing: 12) {
+                                ObjectShotThumb(image: shots.images[o.objectId]) { showZoom(o) }     // 사진을 누르면 크게 (고르기는 오른쪽)
+                                Button {
+                                    if selected.contains(o.objectId) { selected.remove(o.objectId) } else { selected.insert(o.objectId) }
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(name(o)).font(.subheadline.weight(.semibold))
+                                            Text(Fmt.dims(o.dimensions)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Image(systemName: selected.contains(o.objectId) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(selected.contains(o.objectId) ? DB.accent : Color.secondary)
+                                            .font(.title3)
+                                    }
+                                    .contentShape(Rectangle())
                                 }
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .disabled(phase != .editing)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(phase != .editing)
                         }
                     } header: {
                         Text("뺄 가구 (전 세입자의 개인 가구)")
@@ -187,8 +214,9 @@ struct RoomStateCreateView: View {
                 if !staying.isEmpty {
                     Section {
                         ForEach(staying) { o in
-                            HStack {
-                                Text(Fmt.objectLabel(o.category)).font(.subheadline)
+                            HStack(spacing: 12) {
+                                ObjectShotThumb(image: shots.images[o.objectId], width: 56) { showZoom(o) }
+                                Text(name(o)).font(.subheadline)
                                 Spacer()
                                 Text(Self.reason(o)).font(.caption).foregroundStyle(.secondary)
                             }
@@ -224,6 +252,7 @@ struct RoomStateCreateView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
             .errorAlert($error)
+            .sheet(item: $zoom) { z in ObjectShotZoomView(zoom: z) }
             .onAppear { onPreview(chosenIds) }
             .onChange(of: selected) { _, _ in onPreview(chosenIds) }
         }
@@ -232,6 +261,12 @@ struct RoomStateCreateView: View {
             submitTask?.cancel()           // 닫으면 폴링만 멈춘다 (서버 작업은 계속되고, 다음에 열 때 목록에서 찾는다)
             if !finished { onPreview(nil) }
         }
+    }
+
+    private func name(_ o: SceneObject) -> String { names[o.objectId] ?? Fmt.objectLabel(o.category) }
+
+    private func showZoom(_ o: SceneObject) {
+        if let image = shots.images[o.objectId] { zoom = ShotZoom(id: o.objectId, name: name(o), image: image) }
     }
 
     private static func reason(_ o: SceneObject) -> String {
@@ -267,5 +302,64 @@ struct RoomStateCreateView: View {
             self.error = error.userMessage
             phase = .editing
         }
+    }
+}
+
+// MARK: - 가구 사진
+
+/// 크게 볼 가구 사진
+struct ShotZoom: Identifiable {
+    let id: String
+    let name: String
+    let image: UIImage
+}
+
+/// 가구 사진 칸: 3D 방 안에서 그 가구 쪽을 비춘 그림 (노란 상자가 그 가구). 아직 안 왔으면 빈 칸. 누르면 크게 본다
+struct ObjectShotThumb: View {
+    let image: UIImage?
+    var width: CGFloat = 76
+    var onTap: (() -> Void)? = nil
+
+    var body: some View {
+        ZStack {
+            Color.secondary.opacity(0.15)
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: "cube.transparent").foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: width, height: width * 0.75)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture { if image != nil { onTap?() } }
+        .accessibilityElement()
+        .accessibilityLabel(image == nil ? "가구 사진 준비 중" : "가구 위치 사진, 누르면 크게 보기")
+    }
+}
+
+/// 가구 사진 크게 보기
+struct ObjectShotZoomView: View {
+    let zoom: ShotZoom
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(uiImage: zoom.image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                Text("노란 상자가 이 가구입니다. 3D 방 안에서 이 가구 쪽을 비춘 그림이에요.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding()
+            .navigationTitle(zoom.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

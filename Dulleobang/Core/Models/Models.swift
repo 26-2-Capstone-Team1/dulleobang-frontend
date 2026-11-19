@@ -277,10 +277,15 @@ struct SceneObject: Codable, Identifiable {
     var isPersonal: Bool { ownershipType == "PERSONAL" }
     var isRentalOption: Bool { ownershipType == "RENTAL_OPTION" }
     var isUnclassified: Bool { ownershipType == nil || ownershipType == "UNKNOWN" }
-    var isFixture: Bool { !(removable ?? !Self.fixtureCategories.contains(category)) }
+    var isFixture: Bool {
+        if Self.neverFixture.contains(category) { return false }
+        return !(removable ?? !Self.fixtureCategories.contains(category))
+    }
     /// 입주 상태에서 뺄 수 있는 가구: 중개사가 개인 가구로 구분했고 고정 설비가 아닌 것 (명세 v1: PERSONAL + removable)
     var canRemove: Bool { isPersonal && !isFixture }
 
+    /// 서버가 removable: false 로 보내도 고정 설비로 보지 않는 종류. 침대를 고정 설비로 보내는 서버 응답이 있어서 (실서버 시험 매물, 11.19)
+    static let neverFixture: Set<String> = ["bed"]
     /// RoomPlan 종류 중 빼는 게 말이 안 되는 고정 설비
     static let fixtureCategories: Set<String> = ["sink", "toilet", "bathtub", "fireplace", "stairs", "stove", "oven", "dishwasher"]
     /// 서버가 objects 에 유리를 섞어 보낼 때의 종류. 가구가 아니므로 SpaceResponse.glass 로 옮긴다

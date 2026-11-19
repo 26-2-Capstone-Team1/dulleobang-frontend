@@ -38,7 +38,7 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertTrue(Room(space: s).hasGeometry)
 
         // 예전 응답(3DGS)도 그대로 읽는다. 방 구조가 없으면 뷰어가 메시 크기에서 범위를 잡는다
-        let old = try decode(SpaceResponse.self, #"""{"3dgsUri": "/files/scene_current.ply", "objects": []}"""#)
+        let old = try decode(SpaceResponse.self, #"{"3dgsUri": "/files/scene_current.ply", "objects": []}"#)
         XCTAssertNil(old.meshUri)
         XCTAssertEqual(old.threeDgsUri, "/files/scene_current.ply")
         XCTAssertFalse(Room(space: old).hasGeometry)
@@ -149,7 +149,8 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertTrue(obj("bed", "UNKNOWN").isUnclassified)
         XCTAssertFalse(obj("sink", "PERSONAL").canRemove)                  // 고정 설비
         XCTAssertTrue(obj("sink", "PERSONAL", removable: true).canRemove)  // 서버가 정해 주면 그 값을 따른다
-        XCTAssertFalse(obj("bed", "PERSONAL", removable: false).canRemove)
+        XCTAssertTrue(obj("bed", "PERSONAL", removable: false).canRemove)    // 침대는 서버가 false 로 보내도 뺄 수 있다 (11.19)
+        XCTAssertFalse(obj("storage", "PERSONAL", removable: false).canRemove) // 그 밖의 가구는 서버 값을 따른다 (붙박이장 등)
 
         // 최신순 정렬: createdAt 이 같거나 없으면 받은 순서
         let a = RoomState(roomStateId: "a", createdAt: "2026-09-21T01:00:00Z")
@@ -628,7 +629,23 @@ final class MockBackendTests: XCTestCase {
         XCTAssertEqual(Fmt.withAnd("침대"), "침대와")
         XCTAssertEqual(Fmt.withAnd("책상"), "책상과")
         XCTAssertEqual(Fmt.withAnd("TV"), "TV와")
+        XCTAssertEqual(Fmt.withAnd("수납장 1"), "수납장 1과")        // 일
+        XCTAssertEqual(Fmt.withAnd("수납장 2"), "수납장 2와")        // 이
         XCTAssertEqual(Fmt.objectLabel("washerDryer"), "세탁기")
+    }
+
+    /// 같은 이름이 둘 이상이면 받은 순서대로 번호 (뷰어 3D 라벨과 같은 규칙). 하나뿐이면 번호 없음
+    func testObjectNamesNumberDuplicates() {
+        func o(_ id: String, _ category: String) -> SceneObject {
+            SceneObject(objectId: id, category: category, position: Vec3(x: 0, y: 0, z: 0), rotation: Rotation(yaw: 0),
+                        dimensions: Dimensions(width: 1, height: 1, depth: 1))
+        }
+        let names = Fmt.objectNames([o("a", "bed"), o("b", "storage"), o("c", "table"), o("d", "storage"), o("e", "desk")])
+        XCTAssertEqual(names["a"], "침대")
+        XCTAssertEqual(names["b"], "수납장 1")
+        XCTAssertEqual(names["d"], "수납장 2")
+        XCTAssertEqual(names["c"], "책상 1")          // table · desk 는 둘 다 '책상'
+        XCTAssertEqual(names["e"], "책상 2")
     }
 }
 
@@ -767,7 +784,7 @@ final class ServerConfigTests: XCTestCase {
         let saved = UserDefaults.standard.string(forKey: "baseURL")
         UserDefaults.standard.removeObject(forKey: "baseURL")
         defer { if let saved { UserDefaults.standard.set(saved, forKey: "baseURL") } }
-        XCTAssertEqual(AppConfig.shared.baseURL.absoluteString, "http://34.47.87.3:8080/api")
-        XCTAssertEqual(AssetURL.resolve("/files/a.ply")?.absoluteString, "http://34.47.87.3:8080/files/a.ply")
+        XCTAssertEqual(AppConfig.shared.baseURL.absoluteString, "https://34.47.87.3/api")          // 11.19 부터 HTTPS (443)
+        XCTAssertEqual(AssetURL.resolve("/files/a.ply")?.absoluteString, "https://34.47.87.3/files/a.ply")
     }
 }

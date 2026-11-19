@@ -114,7 +114,7 @@ enum ServerErrorText {
         "STALE_SPACE_VERSION": "그 사이 공간이나 가구 구분이 바뀌었습니다. 새로 불러온 뒤 다시 시도해 주세요.",
         "VERSION_MISMATCH": changedElsewhere,
         "PRECONDITION_FAILED": changedElsewhere,
-        "OBJECT_NOT_REMOVABLE": "뺄 수 없는 가구가 들어 있습니다. 개인 가구만 뺄 수 있습니다.",
+        "OBJECT_NOT_REMOVABLE": "서버가 뺄 수 없다고 정한 가구(고정 설비)가 들어 있습니다. 그 가구는 빼고 다시 골라 주세요.",
         "UNKNOWN_OBJECT": "목록에 없는 가구가 들어 있습니다. 새로 불러온 뒤 다시 골라 주세요.",
         "RESOURCE_IN_USE": "다른 곳에서 쓰고 있어 지울 수 없습니다.",
         "FURNITURE_NOT_READY": "3D 모델이 아직 준비되지 않은 가구가 있습니다.",

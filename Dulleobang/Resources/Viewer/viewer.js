@@ -58,6 +58,8 @@ const objectModels = new Map(); // objectId → { url, group } 방과 따로 온
 let scan = null;                // 지금 떠 있는 방 메시 { url, root }
 let sceneRemoved = new Set();   // 장면 파일에서 이미 빠져 있는 가구 (서버가 가구를 빼고 새로 만든 입주 예상 PLY · 장면)
 let loadGen = 0;                // loadScene 이 겹쳐 불렸을 때 늦게 끝난 쪽을 버리기 위한 번호
+let sceneObjects = new Map();   // objectId → 지금 장면의 가구 정보 (가구 사진을 찍을 때 자리 · 크기)
+let removedNow = new Set();     // 지금 화면에서 뺀 가구 (입주 예상 · 가구 빼기 미리보기)
 const furn = new Map();      // furnitureId → { root, pad, lines, label, dims }
 let selected = null;
 
@@ -128,6 +130,8 @@ async function loadScene(p) {
     const models = p.objectModels || {};                 // objectId → 방과 따로 온 가구 GLB 주소 (앱이 내려받아 둔 것)
     const objects = (p.objects || []).map((o) => (o.modelUrl || !models[o.objectId] ? o : { ...o, modelUrl: models[o.objectId] }));
     const removed = new Set(p.removed || []), glassList = p.glass || [];
+    sceneObjects = new Map(objects.map((o) => [o.objectId, o]));
+    removedNow = new Set(removed);
     const progress = (ev) => { if (ev?.total) post({ type: 'progress', value: ev.loaded / ev.total }); };
     if (want.kind === 'splat') {
       const GS = await import('@mkkellogg/gaussian-splats-3d');
@@ -681,11 +685,12 @@ function buildOverlay(objects, removed, glassList = []) {
   top.position.set(c.x, r.ceilingY, c.z);
   overlay.add(top);
 
+  const names = objectNames(objects);
   for (const o of objects) {
     const lines = box(o.dimensions, ownColor(o.ownershipType));
     lines.position.set(o.position.x, o.position.y, o.position.z);
     lines.rotation.y = (o.rotation?.yaw ?? 0) * D2R;
-    const lb = label(`${koName(o.category)}\n${fmtDims(o.dimensions)}`, 'obj');
+    const lb = label(`${names.get(o.objectId)}\n${fmtDims(o.dimensions)}`, 'obj');
     lb.position.set(o.position.x, o.position.y + o.dimensions.height / 2 + 0.08, o.position.z);
     overlay.add(lines, lb);
     objectViz.set(o.objectId, { lines, label: lb });
@@ -701,6 +706,21 @@ const KO = {
   toilet: '변기', bathtub: '욕조', television: 'TV', fireplace: '벽난로', stairs: '계단', other: '가구',
 };
 const koName = (c) => KO[c] ?? c ?? '가구';
+
+// 같은 이름이 둘 이상이면 받은 순서대로 번호를 붙인다 ("수납장 1", "수납장 2").
+// 앱(Fmt.objectNames)도 같은 목록 · 같은 순서로 같은 번호를 붙여서, 가구 구분 · 가구 빼기 목록과 3D 라벨이 맞는다
+function objectNames(objects) {
+  const count = new Map(), seen = new Map(), out = new Map();
+  for (const o of objects) { const n = koName(o.category); count.set(n, (count.get(n) || 0) + 1); }
+  for (const o of objects) {
+    const n = koName(o.category);
+    if (count.get(n) < 2) { out.set(o.objectId, n); continue; }
+    const k = (seen.get(n) || 0) + 1;
+    seen.set(n, k);
+    out.set(o.objectId, `${n} ${k}`);
+  }
+  return out;
+}
 
 function stdMat(color, extra = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0, ...extra });
@@ -1218,6 +1238,7 @@ function setObjectOwnership(id, type) {
 
 function setRemovedObjects(ids) {
   const s = new Set(ids || []);
+  removedNow = s;
   for (const [id, v] of objectViz) { v.lines.visible = !s.has(id); v.label.visible = !s.has(id); }
   for (const [id, m] of objectMeshes) m.visible = !s.has(id);
   applyScanMask(scanHiddenIds(s));
@@ -1228,6 +1249,202 @@ function setOverlay(on) {
   overlay.visible = overlayOn;
   // CSS 라벨은 부모 visible 을 따르지 않는 버전이 있어 직접 숨긴다
   overlay.traverse((o) => { if (o.isCSS2DObject) o.element.style.visibility = overlayOn ? '' : 'hidden'; });
+}
+
+// ---------------------------------------------------------------- 가구 사진 (가구 구분 · 가구 빼기 목록의 작은 그림)
+// 같은 종류가 둘 이상이면(수납장 2개) 이름 · 치수만으로는 어느 가구인지 모른다 (실서버 시험 매물, 11.19).
+// 방 안에서 그 가구를 비춘 그림을 가구마다 만들어 앱에 보낸다 → { type: 'objectShots', shots: { objectId: 'data:image/jpeg;base64,…' } }
+// 화면 캔버스를 잠깐 작은 크기로 바꿔 그리고 곧바로 읽은 뒤 되돌린다. 한 번의 JS 실행 안에서 끝나므로 화면에는 나타나지 않는다.
+// 사진에서는 뺀 가구도 잠깐 되살리고, 치수선 · 내가 놓은 가구는 감추고, 찍는 가구만 노란 상자로 표시한다.
+const SHOT_COLOR = 0xffcc00;
+
+// 세계 좌표 점 → 가구 상자(yaw 회전)의 자기 좌표
+function toBoxLocal(p, q) {
+  const yaw = (q.rotation?.yaw ?? 0) * D2R, cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const x = p.x - q.position.x, z = p.z - q.position.z;
+  return new THREE.Vector3(x * cs - z * sn, p.y - q.position.y, x * sn + z * cs);
+}
+// 바닥에서 본 가구 자리(가로 · 깊이) 안인가. 사람이 설 수 없는 자리 (침대 위 · 옷장 속)
+function onFootprint(p, q, pad = 0) {
+  const l = toBoxLocal(p, q), d = q.dimensions;
+  return Math.abs(l.x) < d.width / 2 + pad && Math.abs(l.z) < d.depth / 2 + pad;
+}
+// a → b 선분이 가구 상자를 지나는가. 상자를 5 cm 줄여서 본다 (바로 붙어 있는 이웃 가구는 가림으로 치지 않는다)
+function segmentHitsBox(a, b, q, shrink = 0.05) {
+  const la = toBoxLocal(a, q), lb = toBoxLocal(b, q), d = q.dimensions;
+  const half = [d.width / 2, d.height / 2, d.depth / 2].map((v) => Math.max(v - shrink, 0.01));
+  const o = [la.x, la.y, la.z], v = [lb.x - la.x, lb.y - la.y, lb.z - la.z];
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(v[i]) < 1e-9) { if (Math.abs(o[i]) > half[i]) return false; continue; }
+    let ta = (-half[i] - o[i]) / v[i], tb = (half[i] - o[i]) / v[i];
+    if (ta > tb) [ta, tb] = [tb, ta];
+    t0 = Math.max(t0, ta);
+    t1 = Math.min(t1, tb);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+// 바닥에서 본 선분 ab 와 cd 가 서로 가로지르는가
+function segmentsCross(ax, az, bx, bz, cx, cz, dx, dz) {
+  const d1 = (dx - cx) * (az - cz) - (dz - cz) * (ax - cx), d2 = (dx - cx) * (bz - cz) - (dz - cz) * (bx - cx);
+  const d3 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax), d4 = (bx - ax) * (dz - az) - (bz - az) * (dx - ax);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+// a → b 사이에 벽이 있는가 (방 밖에서 들여다보거나 ㄱ자 방의 벽 너머를 찍지 않게). 벽 끝 10 cm 는 모서리라 뺀다
+function crossesWall(a, b) {
+  for (const w of room.walls || []) {
+    const [x0, z0] = w.from, [x1, z1] = w.to, len = Math.hypot(x1 - x0, z1 - z0);
+    if (len < 0.3) continue;
+    const ux = ((x1 - x0) / len) * 0.1, uz = ((z1 - z0) / len) * 0.1;
+    if (segmentsCross(a.x, a.z, b.x, b.z, x0 + ux, z0 + uz, x1 - ux, z1 - uz)) return true;
+  }
+  return false;
+}
+
+// 바닥 평면에서 c 로부터 dv 방향으로 가다 처음 만나는 벽까지의 거리 (벽 정보가 없거나 안 만나면 Infinity)
+function distToWall(c, dv) {
+  let best = Infinity;
+  for (const w of room.walls || []) {
+    const [x0, z0] = w.from, [x1, z1] = w.to, ex = x1 - x0, ez = z1 - z0;
+    const den = dv.x * ez - dv.y * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const qx = x0 - c.x, qz = z0 - c.z;
+    const t = (qx * ez - qz * ex) / den, u = (qx * dv.y - qz * dv.x) / den;
+    if (t > 0 && u >= -0.02 && u <= 1.02) best = Math.min(best, t);
+  }
+  return best;
+}
+
+// 가구를 어디서 볼까: 방 가운데 쪽에서, 가구가 화면의 절반쯤 차는 거리(둘레가 보여야 어느 벽 · 어느 가구 옆인지 안다).
+// 방 밖으로는 나가지 않고, 다른 가구 속 · 다른 가구에 가리는 자리는 덜 고른다. 가까이 붙을 수밖에 없으면 화각을 넓힌다
+function shotView(o, aspect) {
+  const d = o.dimensions, c = new THREE.Vector3(o.position.x, o.position.y, o.position.z);
+  const r = 0.5 * Math.hypot(d.width, d.height, d.depth) || 0.5;
+  const half0 = 30 * D2R;                                                   // 기본 세로 화각 60°
+  const halfShort = aspect >= 1 ? half0 : Math.atan(Math.tan(half0) * aspect);
+  const want = Math.max((r / Math.sin(halfShort)) * 1.35, 1.2);
+  const m = 0.15, lo = room.bboxMin, hi = room.bboxMax;
+  // 사람 눈높이쯤(1.25~1.7 m)에서 가구 윗면이 조금 보이게
+  const eyeY = Math.min(clamp(o.position.y + d.height / 2 + 0.3, room.floorY + 1.25, room.floorY + 1.7), room.ceilingY - 0.12);
+  const rc = roomCenter(), toC = new THREE.Vector2(rc.x - c.x, rc.z - c.z);
+  const hasC = toC.lengthSq() > 0.04;
+  if (hasC) toC.normalize();
+  const dirs = hasC ? [toC.clone()] : [];
+  for (let k = 0; k < 16; k++) dirs.push(new THREE.Vector2(Math.cos((k * Math.PI) / 8), Math.sin((k * Math.PI) / 8)));
+  let best = null;
+  for (const dv of dirs) {
+    // 방 안에 머무는 데까지만 물러난다: 벽 30 cm 앞 (방이 비스듬하면 축에 맞춘 범위만으로는 벽 밖으로 나간다, 11.19 실서버 매물 침대 사진)
+    let t = Math.min(want, distToWall(c, dv) - 0.3);
+    if (dv.x > 1e-6) t = Math.min(t, (hi.x - m - c.x) / dv.x); else if (dv.x < -1e-6) t = Math.min(t, (lo.x + m - c.x) / dv.x);
+    if (dv.y > 1e-6) t = Math.min(t, (hi.z - m - c.z) / dv.y); else if (dv.y < -1e-6) t = Math.min(t, (lo.z + m - c.z) / dv.y);
+    t = Math.max(t, 0);
+    const pos = new THREE.Vector3(c.x + dv.x * t, eyeY, c.z + dv.y * t);
+    let score = t / want + (hasC ? 0.25 * dv.dot(toC) : 0);
+    if (crossesWall(pos, c)) score -= 3;
+    for (const q of sceneObjects.values()) {
+      if (q.objectId === o.objectId) continue;
+      if (onFootprint(pos, q, 0.15)) score -= 1;                            // 다른 가구 위 · 속 (사람이 설 수 없는 자리)
+      else if (segmentHitsBox(pos, c, q)) score -= 0.6;                     // 다른 가구에 가림
+    }
+    if (!best || score > best.score) best = { score, pos };
+  }
+  const dist = Math.max(best.pos.distanceTo(c), 0.05);
+  const need = Math.min(Math.asin(Math.min(1, r / dist)) / 0.8, 50 * D2R); // 가구가 화면 짧은 쪽의 80% 안에 들게
+  const short = Math.max(halfShort, need);
+  const halfV = aspect >= 1 ? short : Math.atan(Math.tan(short) / aspect);
+  return { pos: best.pos, target: c, fov: Math.min((2 * halfV) / D2R, 100) };
+}
+
+// 가구 상자의 모서리 12개를 사진 위에 굵게 긋는다 (가려진 모서리도 그어서 어디까지가 그 가구인지 보이게)
+const BOX_EDGES = [[0, 1], [1, 3], [3, 2], [2, 0], [4, 5], [5, 7], [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+function strokeBox(ctx, o, w, h) {
+  const d = o.dimensions, yaw = (o.rotation?.yaw ?? 0) * D2R, cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const pts = [];
+  for (let i = 0; i < 8; i++) {
+    const lx = (i & 1 ? 0.5 : -0.5) * d.width, ly = (i & 2 ? 0.5 : -0.5) * d.height, lz = (i & 4 ? 0.5 : -0.5) * d.depth;
+    const v = new THREE.Vector3(o.position.x + lx * cs + lz * sn, o.position.y + ly, o.position.z - lx * sn + lz * cs);
+    const behind = v.clone().applyMatrix4(camera.matrixWorldInverse).z > -0.01;      // 카메라 뒤
+    v.project(camera);
+    pts.push(behind ? null : [(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h]);
+  }
+  const lw = Math.max(2, Math.round(w / 140));
+  for (const [color, width] of [['rgba(0,0,0,0.55)', lw + 2], ['#ffcc00', lw]]) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (const [a, b] of BOX_EDGES) {
+      if (!pts[a] || !pts[b]) continue;
+      ctx.moveTo(pts[a][0], pts[a][1]);
+      ctx.lineTo(pts[b][0], pts[b][1]);
+    }
+    ctx.stroke();
+  }
+}
+
+function objectShots(ids, w = 480, h = 360) {
+  const list = (ids && ids.length ? ids : [...sceneObjects.keys()]).map((id) => sceneObjects.get(id)).filter(Boolean);
+  const shots = {};
+  if (!room || !list.length) { post({ type: 'objectShots', shots }); return; }
+  const size = renderer.getSize(new THREE.Vector2()), pr = renderer.getPixelRatio();
+  const saved = { pos: camera.position.clone(), quat: camera.quaternion.clone(), fov: camera.fov, aspect: camera.aspect,
+                  near: camera.near, far: camera.far, overlay: overlay.visible, furn: furnGroup.visible };
+  const removedBefore = [...removedNow];
+  const unit = new THREE.BoxGeometry(1, 1, 1);
+  const hl = new THREE.Mesh(unit, new THREE.MeshBasicMaterial({ color: SHOT_COLOR, transparent: true, opacity: 0.15, depthWrite: false }));
+  hl.renderOrder = 9;
+  const out = document.createElement('canvas');                              // WebGL 그림 + 굵은 테두리를 여기에 그려 JPEG 로
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext('2d');
+  try {
+    setRemovedObjects([]);
+    overlay.visible = false;
+    furnGroup.visible = false;
+    scene.add(hl);
+    renderer.setPixelRatio(1);
+    renderer.setSize(w, h, false);
+    for (const o of list) {
+      const v = shotView(o, w / h), d = o.dimensions;
+      hl.position.set(o.position.x, o.position.y, o.position.z);
+      hl.rotation.set(0, (o.rotation?.yaw ?? 0) * D2R, 0);
+      hl.scale.set(d.width + 0.04, d.height + 0.04, d.depth + 0.04);
+      camera.position.copy(v.pos);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(v.target);
+      camera.fov = v.fov;
+      camera.aspect = w / h;
+      camera.near = 0.03;
+      camera.far = 100;
+      camera.updateProjectionMatrix();
+      updatePointSize();
+      renderer.render(scene, camera);
+      try {
+        ctx.drawImage(cvs, 0, 0, w, h);
+        strokeBox(ctx, o, w, h);
+        shots[o.objectId] = out.toDataURL('image/jpeg', 0.82);
+      } catch (e) { console.warn('가구 사진을 만들지 못했습니다', o.objectId, e); }
+    }
+  } finally {
+    scene.remove(hl);
+    unit.dispose();
+    hl.material.dispose();
+    renderer.setPixelRatio(pr);
+    renderer.setSize(size.x, size.y, false);
+    camera.position.copy(saved.pos);
+    camera.quaternion.copy(saved.quat);
+    Object.assign(camera, { fov: saved.fov, aspect: saved.aspect, near: saved.near, far: saved.far });
+    camera.updateProjectionMatrix();
+    updatePointSize();
+    overlay.visible = saved.overlay;
+    furnGroup.visible = saved.furn;
+    setRemovedObjects(removedBefore);
+    renderer.render(scene, camera);                                          // 이 JS 실행이 끝나기 전에 화면을 원래 모습으로
+  }
+  post({ type: 'objectShots', shots });
 }
 
 // ---------------------------------------------------------------- loop / resize
@@ -1304,6 +1521,6 @@ window.DV = {
     });
     return { scan: 'mesh', tris, owned, hidden, maskMs: root.userData.maskMs, frames };
   },
-  addFurniture, setFurnitureState, setFurnitureTransform, removeFurniture, select,
+  addFurniture, setFurnitureState, setFurnitureTransform, removeFurniture, select, objectShots,
 };
 post({ type: 'ready' });

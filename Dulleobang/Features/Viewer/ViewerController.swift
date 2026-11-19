@@ -14,6 +14,7 @@ enum ViewerEvent {
     case bounds(min: Vec3, max: Vec3)       // 방 구조 없이 연 방 메시의 범위 (뷰어가 메시 크기에서 잡아 알려 준다)
     case meshFailed(String)                 // 방 메시를 못 읽음 (깨진 파일 · 메모리 부족) → 점구름이 있으면 그것으로 다시 연다
     case crashed                            // 뷰어(웹 프로세스)가 죽었다가 다시 떴다. 큰 메시로 메모리가 모자라면 iOS 가 웹 프로세스를 끝낸다
+    case objectShots([String: String])      // 가구마다 방 안에서 비춘 그림 (objectId → data:image/jpeg;base64,…)
 
     init?(_ body: Any) {
         guard let d = body as? [String: Any], let type = d["type"] as? String else { return nil }
@@ -29,6 +30,7 @@ enum ViewerEvent {
             self = .transform(id: id, x: num("x"), z: num("z"), yaw: num("yaw"), final: (d["final"] as? Bool) ?? false)
         case "furnitureLoaded": self = .furnitureLoaded(d["id"] as? String ?? "")
         case "meshFailed": self = .meshFailed(d["message"] as? String ?? "")
+        case "objectShots": self = .objectShots(d["shots"] as? [String: String] ?? [:])
         case "bounds":
             func vec(_ k: String) -> Vec3? {
                 guard let v = d[k] as? [String: Any],

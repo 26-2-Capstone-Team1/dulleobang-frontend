@@ -144,14 +144,33 @@ enum Fmt {
         case "television": return "TV"
         case "fireplace": return "벽난로"
         case "stairs": return "계단"
+        case "other": return "가구"
         default: return category
         }
     }
 
-    /// 받침에 맞는 조사: "침대" → "침대와", "책상" → "책상과"
+    /// 같은 이름이 둘 이상이면 받은 순서대로 번호를 붙인다 ("수납장 1", "수납장 2").
+    /// 3D 뷰어(viewer.js 의 objectNames)도 같은 목록 · 같은 순서로 번호를 붙여서, 가구 구분 · 가구 빼기 목록과 3D 라벨이 맞는다
+    static func objectNames(_ objects: [SceneObject]) -> [String: String] {
+        var count: [String: Int] = [:], seen: [String: Int] = [:], out: [String: String] = [:]
+        for o in objects { count[objectLabel(o.category), default: 0] += 1 }
+        for o in objects {
+            let name = objectLabel(o.category)
+            guard count[name, default: 0] > 1 else { out[o.objectId] = name; continue }
+            seen[name, default: 0] += 1
+            out[o.objectId] = "\(name) \(seen[name, default: 1])"
+        }
+        return out
+    }
+
+    /// 받침에 맞는 조사: "침대" → "침대와", "책상" → "책상과", "수납장 2" → "수납장 2와"(이), "수납장 1" → "수납장 1과"(일)
     static func withAnd(_ word: String) -> String {
-        guard let last = word.unicodeScalars.last, (0xAC00...0xD7A3).contains(last.value) else { return word + "와" }
-        return word + ((last.value - 0xAC00) % 28 == 0 ? "와" : "과")
+        guard let last = word.unicodeScalars.last else { return word + "와" }
+        if (0xAC00...0xD7A3).contains(last.value) { return word + ((last.value - 0xAC00) % 28 == 0 ? "와" : "과") }
+        if last.isASCII, let digit = Character(last).wholeNumberValue {
+            return word + ([0, 1, 3, 6, 7, 8].contains(digit) ? "과" : "와")      // 영 · 일 · 삼 · 육 · 칠 · 팔 은 받침이 있다
+        }
+        return word + "와"
     }
 
     // 3D 치수 (기존 화면용)
