@@ -76,7 +76,11 @@ enum SocialLogin {
 
     /// https 이거나, 같은 Wi-Fi 의 개발 서버
     static func isSecure(_ url: URL) -> Bool {
-        if url.scheme?.lowercased() == "https" { return true }
+        url.scheme?.lowercased() == "https" || isLocal(url)
+    }
+
+    /// 같은 Wi-Fi 의 개발 서버 (사설 IP · .local · localhost)
+    static func isLocal(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
         if host == "localhost" || host == "127.0.0.1" || host.hasSuffix(".local") { return true }
         let p = host.split(separator: ".").compactMap { Int($0) }
@@ -175,6 +179,27 @@ final class Session: ObservableObject {
     @Published private(set) var favoriteIds: Set<String> = []
     @Published private(set) var recent: [Listing] = []
     @Published var toast: String? = nil
+
+    // MARK: 채팅 알림 (앱이 켜져 있는 동안 15초마다 확인). 앱을 닫아 둔 동안의 알림은 백엔드 푸시(APNs)가 있어야 한다
+    /// 안 읽은 채팅 메시지 수 (채팅 탭 배지)
+    @Published private(set) var unreadChats = 0
+    /// 안 읽은 메시지가 있는 채팅방 (알림 화면)
+    @Published private(set) var unreadRooms: [ChatRoomSummary] = []
+    /// 새 메시지 배너 (위에서 내려오고, 누르면 그 채팅방으로 간다)
+    @Published var chatBanner: ChatBanner? = nil
+    /// 배너를 눌렀을 때 채팅 탭이 열 방
+    @Published var pendingChatId: String? = nil
+    /// 지금 보고 있는 채팅방 (그 방의 새 메시지는 배지 · 배너로 알리지 않는다)
+    var openChatId: String? = nil
+    private var seenUnread: [String: Int] = [:]
+    private var chatBaseline = false
+
+    struct ChatBanner: Identifiable, Equatable {
+        let id = UUID()
+        let chatId: String
+        let title: String
+        let text: String
+    }
 
     private enum Key {
         static let userId = "userId", name = "userName", provider = "authProvider", token = "accessToken"
@@ -287,6 +312,57 @@ final class Session: ObservableObject {
         agent = nil
         favoriteIds = []
         recent = []
+        unreadChats = 0
+        unreadRooms = []
+        chatBanner = nil
+        pendingChatId = nil
+        openChatId = nil
+        seenUnread = [:]
+        chatBaseline = false
+    }
+
+    /// 회원 탈퇴: 서버 계정을 지운 뒤 기기에서도 로그아웃한다. 데모 데이터 · 개발용 로그인은 서버 계정이 없어 로그아웃만 한다
+    func deleteAccount() async throws {
+        if provider != "dev" && !AppConfig.shared.useMockData {
+            try await UserAPI.deleteAccount()
+        }
+        await logout()
+    }
+
+    /// 채팅 목록을 15초마다 확인해 채팅 탭 배지와 새 메시지 배너를 갱신한다 (MainTabView 가 떠 있는 동안). 앱이 뒤에 있으면 건너뛴다
+    func watchChats() async {
+        chatBaseline = false
+        while !Task.isCancelled {
+            if UIApplication.shared.applicationState == .active { await checkChats() }
+            try? await Task.sleep(for: .seconds(15))
+        }
+    }
+
+    func checkChats() async {
+        guard isLoggedIn, let rooms = try? await ChatAPI.rooms() else { return }
+        applyChatRooms(rooms)
+    }
+
+    /// 채팅 목록 → 배지 · 배너. 채팅 탭 목록이 받아 온 것도 여기로 넘긴다. 처음 한 번은 기준만 잡고 배너를 띄우지 않는다
+    func applyChatRooms(_ rooms: [ChatRoomSummary]) {
+        let unread = rooms.filter { ($0.unreadCount ?? 0) > 0 && $0.chatId != openChatId }
+        unreadChats = unread.reduce(0) { $0 + ($1.unreadCount ?? 0) }
+        unreadRooms = unread
+        if chatBaseline {
+            let fresh = unread.filter { ($0.unreadCount ?? 0) > (seenUnread[$0.chatId] ?? 0) }
+            if let r = fresh.max(by: { ($0.lastMessageAt ?? "") < ($1.lastMessageAt ?? "") }) {
+                chatBanner = ChatBanner(chatId: r.chatId, title: r.counterpartName ?? "새 메시지",
+                                        text: r.lastMessage ?? "새 메시지가 왔어요")
+            }
+        }
+        seenUnread = Dictionary(rooms.map { ($0.chatId, $0.unreadCount ?? 0) }, uniquingKeysWith: { a, _ in a })
+        chatBaseline = true
+    }
+
+    /// 배너를 눌렀을 때: 채팅 탭에서 그 방을 연다 (ChatListContent 가 pendingChatId 를 보고 연다)
+    func openChatFromBanner(_ chatId: String) {
+        chatBanner = nil
+        pendingChatId = chatId
     }
 
     func refresh() async {

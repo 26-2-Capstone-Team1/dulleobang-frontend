@@ -90,10 +90,13 @@ struct LoginView: View {
                 }
 
                 #if DEBUG
-                Button("로그인 없이 시작 (개발용)") { session.devLogin() }
-                    .font(.footnote)
-                    .foregroundStyle(DB.sub)
-                    .padding(.top, 4)
+                // 서버 토큰 없이 들어가므로 실서버에서는 매물이 401 로 안 보인다 → 데모 데이터 · 같은 Wi-Fi 의 개발 서버에서만
+                if demoMode || SocialLogin.isLocal(AppConfig.shared.baseURL) {
+                    Button("로그인 없이 시작 (개발용)") { session.devLogin() }
+                        .font(.footnote)
+                        .foregroundStyle(DB.sub)
+                        .padding(.top, 4)
+                }
                 #endif
             }
             .padding(.horizontal, 24)

@@ -13,6 +13,8 @@ private struct MyPageContent: View {
     @State private var myCount: Int?
     @State private var furnitureCount: Int?
     @State private var confirmLogout = false
+    @State private var confirmDelete = false
+    @State private var error: String?
 
     var body: some View {
         ScrollView {
@@ -57,6 +59,10 @@ private struct MyPageContent: View {
                     Button { confirmLogout = true } label: {
                         NavRowLabel(title: "로그아웃", titleColor: DB.danger)
                     }
+                    RowDivider()
+                    Button { confirmDelete = true } label: {
+                        NavRowLabel(title: "회원 탈퇴", titleColor: DB.sub)
+                    }
                 }
                 .buttonStyle(.plain)
             }
@@ -70,6 +76,23 @@ private struct MyPageContent: View {
         .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
             Button("로그아웃", role: .destructive) { Task { await session.logout() } }
             Button("취소", role: .cancel) {}
+        }
+        .confirmationDialog("회원 탈퇴할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("탈퇴하기", role: .destructive) { Task { await deleteAccount() } }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("계정과 계정에 딸린 정보가 서버에서 삭제되고 되돌릴 수 없습니다.")
+        }
+        .errorAlert($error)
+    }
+
+    private func deleteAccount() async {
+        do {
+            try await session.deleteAccount()
+        } catch let e as APIError where e.isMissingEndpoint {
+            self.error = "서버에 아직 탈퇴 기능이 없습니다. 백엔드가 준비하면 다시 시도해 주세요. (\(e.status))"
+        } catch {
+            if !error.isCancellation { self.error = error.userMessage }
         }
     }
 
@@ -88,9 +111,9 @@ private struct MyPageContent: View {
             }
             Spacer()
             NavigationLink(value: AppRoute.notifications) {
-                Image(systemName: "bell").font(.title3)
+                Image(systemName: session.unreadChats > 0 ? "bell.badge" : "bell").font(.title3)
             }
-            .accessibilityLabel("알림")
+            .accessibilityLabel(session.unreadChats > 0 ? "알림, 안 읽은 채팅 \(session.unreadChats)개" : "알림")
             NavigationLink(value: AppRoute.settings) {
                 Image(systemName: "gearshape").font(.title3)
             }
@@ -525,16 +548,40 @@ struct MyListingsView: View {
     }
 }
 
+/// 알림: 지금은 안 읽은 채팅만 (3D 공간 생성 완료 · 중개사 인증 결과는 서버 알림이 생기면 추가)
 struct NotificationsView: View {
+    @EnvironmentObject private var session: Session
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("알림").font(.title2.weight(.bold)).foregroundStyle(DB.ink)
-                EmptyStateView(icon: "bell", title: "새 알림이 없습니다",
-                               message: "채팅 · 3D 공간 생성 완료 · 중개사 인증 결과를 여기에서 알려 드릴 예정입니다.")
+                if session.unreadRooms.isEmpty {
+                    EmptyStateView(icon: "bell", title: "새 알림이 없습니다",
+                                   message: "안 읽은 채팅이 생기면 여기에 보여 드립니다. 3D 공간 생성 완료 · 중개사 인증 결과도 여기에서 알려 드릴 예정입니다.")
+                } else {
+                    ForEach(session.unreadRooms) { r in
+                        NavigationLink(value: AppRoute.chat(r.chatId)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "message.fill").foregroundStyle(DB.accent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(r.counterpartName ?? "채팅") · 새 메시지 \(r.unreadCount ?? 0)개")
+                                        .font(.subheadline.weight(.semibold)).foregroundStyle(DB.ink)
+                                    Text(r.lastMessage ?? " ").font(.caption).foregroundStyle(DB.sub).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(DB.faint)
+                            }
+                            .padding(12)
+                            .background(DB.group, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
             .padding(.horizontal, 20)
         }
         .toolbar(.hidden, for: .tabBar)
+        .task { await session.checkChats() }
     }
 }
