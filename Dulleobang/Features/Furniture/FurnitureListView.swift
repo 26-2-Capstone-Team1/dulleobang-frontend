@@ -51,7 +51,7 @@ struct FurnitureRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(furniture.label).font(.headline)
                 if let d = furniture.dimensions {
-                    Text("가로 \(Int(d.width * 100)) · 깊이 \(Int(d.depth * 100)) · 높이 \(Int(d.height * 100)) cm")
+                    Text("가로 \(Int((d.width * 100).rounded())) · 깊이 \(Int((d.depth * 100).rounded())) · 높이 \(Int((d.height * 100).rounded())) cm")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
