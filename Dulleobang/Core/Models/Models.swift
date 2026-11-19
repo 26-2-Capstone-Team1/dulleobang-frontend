@@ -483,7 +483,14 @@ struct AuthUser: Decodable {
     }
 }
 
-struct SignupRequest: Codable { var email: String; var password: String; var displayName: String }
+struct SignupRequest: Codable {
+    static let passwordLength = 8...128
+    static let passwordLengthMessage = "비밀번호는 \(passwordLength.lowerBound)자 이상 \(passwordLength.upperBound)자 이하로 입력해 주세요"
+
+    var email: String
+    var password: String
+    var displayName: String
+}
 struct LoginRequest: Codable { var email: String; var password: String }
 struct RefreshRequest: Codable { var refreshToken: String }
 
