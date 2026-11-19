@@ -56,7 +56,8 @@
 
 XcodeGen 을 안 쓰면: 새 iOS App 프로젝트(SwiftUI) 를 만들고 `Dulleobang/` 의 Swift 파일을 추가하되,
 **`Resources/Viewer` · `Resources/Mock` 폴더는 "Create folder references"(파란 폴더)로 추가**해야 합니다. Info.plist 키는 `project.yml` 의 `info.properties` 참고
-(카메라·로컬 네트워크 사용 설명, ATS 로컬 허용, `UIFileSharingEnabled`).
+(카메라·로컬 네트워크 사용 설명, ATS 예외 `NSAllowsArbitraryLoads`, `UIFileSharingEnabled`).
+`NSAllowsLocalNetworking` 은 같이 넣지 마세요. 이 키가 있으면 iOS 가 `NSAllowsArbitraryLoads` 를 무시해서 http 팀 서버 요청이 막힙니다("App Transport Security policy requires the use of a secure connection").
 
 > Swift 5 언어 모드로 설정되어 있습니다 (Swift 6 엄격 동시성 검사는 경고만 나옴).
 > 이 코드는 컴파일러 없는 환경에서 작성했습니다. 처음 빌드 때 작은 오류가 나오면 오류 메시지와 파일을 공유해 주세요.
@@ -85,7 +86,7 @@ XcodeGen 을 안 쓰면: 새 iOS App 프로젝트(SwiftUI) 를 만들고 `Dulleo
 - **가구 빼 보기(임차인)**: 3D 공간 › **가구 빼 보기** 에서 개인 가구 중 뺄 것을 고르면 6초 뒤 그 가구가 빠진 입주 예상 공간이 열립니다. 만든 입주 상태는 나만 봅니다.
 - **등록·촬영**: 매물 등록 · 공간 촬영 · 가구 촬영도 됩니다. 사진은 기기에 저장되고, AI 작업은 몇 초(공간 20초 · 가구 12초) 뒤 완료 처리됩니다.
   LiDAR 기기의 RoomPlan 구조(`roomplan_structure.json`)가 있으면 그 벽·문·창·가구로, 없으면 전용면적으로 직사각형 방을 만듭니다.
-- **3D 뷰어**: 스캔 파일(PLY)이 없는 공간은 `viewer.js` 의 `buildBlockout` 이 벽·문·창·바닥과 가구 모형을 그립니다(1인칭/평면뷰, 치수, 입주 예상, 가구 배치·충돌 모두 동작). three.js 는 CDN 에서 받으므로 인터넷이 필요합니다(`vendor/` 에 사본을 넣으면 오프라인).
+- **3D 뷰어**: 방 메시(room.glb)도 스캔 파일도 없는 공간(데모 데이터는 모두 그렇습니다)은 `viewer.js` 의 `buildBlockout` 이 벽·문·창·바닥과 가구 모형을 그립니다(1인칭/평면뷰, 치수, 입주 예상, 가구 배치·충돌 모두 동작). three.js 는 CDN 에서 받으므로 인터넷이 필요합니다(`vendor/` 에 사본을 넣으면 오프라인).
 - 데모에서 바꾼 내용은 `Application Support/DemoData` 에 저장됩니다. **설정 › 데모 데이터 초기화** 로 처음 상태로 되돌립니다.
 - 시드는 JSON 한 파일입니다. 매물·가격을 바꾸려면 `Resources/Mock/mock_seed.json` 을 고치고 `seedVersion` 을 올리세요(앱이 새 시드를 자동으로 다시 읽음).
   사진은 같은 폴더의 파일을 `bundle://Mock/L01_1.jpg` 처럼 가리킵니다. 사진·시드를 다시 만드는 스크립트: `tools/mockgen/` (Python + Pillow + NumPy,
@@ -105,7 +106,7 @@ zip 은 파일 앱 › 나의 iPhone › 둘러방 › captures 에도 남습니
 
 **찍는 사람에게 부탁할 것은 두세 가지뿐**(앱 시작 화면에도 나옴): ① 방 전체를 천천히 한 바퀴 — 욕실 · 주방 같은 좁은 곳도 한 번씩 안에 들어가서, ② 다른 사람은 화면 밖으로, ③ (가능하면) 불 켜기. 어두우면 촬영을 시작하고 몇 초 뒤 손전등이 자동으로 켜져 끝날 때까지 켜져 있어요(오른쪽 위 버튼으로 끄기 · 설정(개발자)에서 자동 켜기 끄기).
 나머지는 **화면 안내를 따르면 됩니다**: "너무 빨라요"(흔들림이 커서 사진을 버리기 직전), "OO쪽 벽에 아직 덜 찍힌 곳이 있어요"(RoomPlan 벽 · 바닥 중 사진 3장 미만에 나온 곳, 아래 `surfaceCoverage`),
-"위치를 놓쳤어요 — 조금 뒤로 가서 다시 비추기"(추적이 끊김). 초점 고정 · 손떨림 보정 없음 · 초당 5장 저장 · 흔들린 사진 거르기는 앱이 알아서 합니다(초점은 시작 2초 뒤 고정, 설정(개발자)에서 끌 수 있음).
+"위치를 놓쳤어요 — 조금 뒤로 가서 다시 비추기"(추적이 끊김). 초점 고정 · 셔터 상한(1/120초) · 손떨림 보정 없음 · 초당 5장 저장 · 흔들린 사진 거르기는 앱이 알아서 합니다(초점은 시작 2초 뒤 고정. 초점 고정과 셔터 상한은 설정(개발자)에서 끌 수 있음).
 오른쪽 위 **촬영 지도**(미니맵): 초록 = 충분히 찍힌 벽, 노랑 · 주황 = 덜 찍힌 벽, 주황 점 = 덜 찍힌 바닥, 파란 점 = 내 위치(바라보는 방향이 늘 위쪽), 주황 동그라미 = 지금 안내하는 곳 — 첫 바퀴 뒤에는 화면 아래 화살표가 그쪽을 가리킵니다(바로 발밑이면 '발밑 바닥이 덜 찍혔어요').
 팁(안 지켜도 됨 — 서버가 대부분 보정): 제자리에서 돌기보다 벽을 보며 옆으로(많이 돌기만 하면 안내 문구에 팁이 뜸), 물건과 40 cm 이상, 촬영 중 문 · 가구는 그대로(바꾸면 그 자리에 유령),
 거울은 가리기, 한 번에 방 하나, 한 번 촬영은 3~5분 안으로(폰이 뜨거워지면 프레임이 빠짐 — `capture_log.json` 의 `thermal`).
@@ -116,15 +117,18 @@ zip 은 파일 앱 › 나의 iPhone › 둘러방 › captures 에도 남습니
 | 경고 | 언제 | 안내 |
 |---|---|---|
 | 위치를 놓쳤어요 (빨강) | ARKit 추적이 끊기거나 위치를 다시 찾는 중 0.5초 이상 | 조금 뒤로 가서 방금 찍은 곳을 천천히 다시 비추기 |
-| 어두워서 사진이 흔들려요 (빨강) | 아래 흔들림 조건 + 셔터(평활)가 1/75초보다 김 (ARKit 은 60 fps 라 최대 1/60초) | 불을 켜거나 더 천천히 |
-| 너무 빨라요 · 사진이 흔들려요 (빨강) | 예상 흔들림 5 px 이상이 0.4초 이상 (또는 ARKit 이 "움직임이 과함") | 천천히. **6 px 이상 흔들린 프레임은 저장하지 않음** |
+| 어두워서 사진이 흔들려요 (빨강) | 아래 흔들림 조건 + 셔터(평활)가 1/75초보다 김. 셔터 상한(1/120초)이 걸려 있으면 뜨지 않고, 상한을 껐거나 걸지 못했을 때만 뜸 | 불을 켜거나 더 천천히 |
+| 너무 빨라요 · 사진이 흔들려요 (빨강) | 예상 흔들림 2.5 px 이상이 0.4초 이상 (또는 ARKit 이 "움직임이 과함") | 천천히. **3 px 이상 흔들린 프레임은 저장하지 않음** |
 | 무늬 없는 면만 보여요 (주황) | 화면 밝기 변화 점수 6 미만 1초 이상 (흰 벽 · 화이트보드만 가득) | 가구·문·모서리가 함께 보이게 물러나기 |
 | 너무 가까워요 (주황) | LiDAR 로 잰 화면 가운데 거리 45 cm 미만 1초 이상 | 한 걸음 물러나기 |
 | 제자리에서만 찍고 있어요 (주황, 방 촬영만) | 최근 8초 동안 35 cm 도 안 움직이고 바라보는 방향이 60° 이상 바뀜, 또는 15초가 지나도 이동 범위 1 m 미만이고 걷지 않음 | 방을 따라 걸으면서 (걸으면서도 많이 돌기만 하면 경고 대신 안내 문구에 '옆으로 걸으면 더 선명해요' 팁) |
 | 바닥이 거의 안 찍혔어요 (주황, 방 촬영 · LiDAR 기기만) | 첫 바퀴(12방향 + 이동 범위 2 m)를 마쳤거나 60초가 지났는데, 걸어온 길 중 '바닥 사진'을 찍은 곳이 60% 미만이고 폰이 수평(20° 이상 숙이지 않음)인 채로 6초 | 폰을 30~45° 숙여 걸어온 길의 바닥을 찍기 |
 
 예상 흔들림(px) = 화면 가운데 점이 움직이는 속도(회전 − 옆 이동 ÷ 가운데 거리, 가구를 바라보며 돌 때처럼 서로 상쇄되면 작아짐) × 셔터 시간(`ARCamera.exposureDuration`) × 초점거리(px).
-5 px · 6 px 는 시작값입니다. 경고는 사진을 버리기(6 px) 직전에만 띄웁니다 — 3 px 부터 띄우면 AI 팀 new1(중앙값 3.7 px) 기준으로 거의 계속 떠 있게 됩니다. 촬영본 `poses.json` 의 `blurPx` 와 실제 흐림을 비교해 조정하세요.
+경고 2.5 px · 저장 한도 3 px 입니다(2026-11-18, AI 팀 요청으로 5 px · 6 px 에서 낮춤). 경고는 사진을 버리기 직전에만 띄웁니다.
+같은 날 **셔터 상한 1/120초**도 넣었습니다(`AppConfig.maxExposureS`, 설정(개발자)에서 끌 수 있음). 어두운 방에서 자동 노출이 셔터를 1/60초까지 늘리던 것을 막아 같은 속도에서 번짐이 절반이 되고, 모자란 밝기는 ISO 를 올려 채웁니다(그만큼 거칠어지고, 손전등 자동 켜기는 같은 밝기에서 켜지도록 ISO 기준을 2000 으로 환산).
+그래서 셔터가 1/60초까지 길어지던 방에서는 움직일 수 있는 속도가 전과 같고(1/120초 · 3 px = 초당 약 15°), 원래 1/120초 이하이던 밝은 방에서는 전의 절반 속도로 움직여야 합니다.
+전에 3 px 경고를 피한 근거였던 AI 팀 new1(중앙값 3.7 px)이 1/60초로 찍힌 것이면 상한 뒤에는 약 1.9 px 라 괜찮고, 1/120초 이하로 찍힌 것이면 그대로 3.7 px 라 절반 넘게 버려집니다. 촬영본 `poses.json` 의 `blurPx` · `exposureS` 와 실제 흐림을 비교해 조정하세요.
 정지를 눌렀을 때 이동 범위가 1 m 미만이면 "제자리에서만 찍었어요", 바닥을 찍은 곳이 60% 미만이면 "바닥이 덜 찍혔어요" 를 묻습니다(더 찍기 / 그대로 끝내기).
 천장을 찍은 곳이 40% 미만이면(안내를 포기하지 않았다면) "천장이 덜 찍혔어요" 를 **촬영당 한 번만** 묻습니다.
 천장은 선택 사항이라 위 표처럼 경고 띠 · 진동은 없고, 안내 문구와 막대의 "천장 n%" 로만 알립니다. 위를 20° 넘게 보는 동안에는 '무늬 없는 면' 경고도 띄우지 않습니다(천장은 대개 흰색).
@@ -157,7 +161,7 @@ zip 은 파일 앱 › 나의 iPhone › 둘러방 › captures 에도 남습니
 (가구를 따로 3D 로 만들거나 재질을 다시 입힐 때 쓰는 대표 사진). 다른 가구나 사람에 **가려지거나 뒷면이 안 보이는 것은 어쩔 수 없다고 보고 통과 여부에 쓰지 않습니다**
 (안 보이는 부분은 SAM 3D 가 메웁니다). 코드: `Features/Capture/FurnitureShots.swift`(`FurnitureShotConfig` 에 기준값).
 - RoomPlan 이 스캔 중에 고쳐 주는 가구 상자(`RoomCaptureSessionDelegate.captureSession(_:didUpdate:)`)와 프레임마다의 카메라 포즈 · LiDAR 깊이(64×48 격자)로 10 Hz 마다 점검합니다.
-- 통과 조건: ① 상자 꼭짓점 8개가 모두 화면 안(가장자리 2% 여유) ② 화면 가로나 세로의 30% 이상 ③ 예상 흔들림 6 px 이하.
+- 통과 조건: ① 상자 꼭짓점 8개가 모두 화면 안(가장자리 2% 여유) ② 화면 가로나 세로의 30% 이상 ③ 예상 흔들림 3 px 이하.
   **가려짐은 통과 여부에 쓰지 않고 점수 · 기록용**입니다: 카메라 쪽 옆면 · 윗면에 면마다 5×5 점을 찍어 LiDAR 와 비교해 안 가려진 비율(`visible`)을 재고
   (상자 면보다 10 cm + 거리의 3% 넘게 앞에 무언가 있으면 가려진 점. 단 그것이 가구 자신 · 위에 놓인 물건(컵 · 책 · TV) · 바닥 · 이 가구에 붙은 더 작은 가구(식탁에 넣은 의자)면 치지 않음),
   덜 가려진 사진이 대표 사진으로 더 높은 점수를 받습니다. 가린 가구(`blockedBy`)도 사진마다 적습니다. 다만 5% 도 안 보이면(벽 너머 등) 본 것으로 치지 않습니다.
@@ -238,11 +242,14 @@ capture/
   "thermal": [ { "ts": 18200.1, "state": "nominal" }, { "ts": 18310.2, "state": "fair" } ],
   "focus": { "lockEnabled": true, "lockedAtTs": 18202.2, "lensPosition": 0.71, "relocks": 0 },
   "depthSources": { "sceneDepth": 539 },
-  "torch": { "autoEnabled": true, "events": [ { "ts": 18240.3, "on": true, "by": "auto", "trigger": "ISO 1250 · 셔터 0.0167초" } ] } }
+  "torch": { "autoEnabled": true, "events": [ { "ts": 18240.3, "on": true, "by": "auto", "trigger": "ISO 2100 · 셔터 0.0083초" } ] },
+  "exposure": { "capEnabled": true, "capS": 0.008333, "defaultMaxS": 0.016667, "appliedAtTs": 18200.2, "reapplied": 1, "longestS": 0.008333 } }
 ```
 시각(`…Ts`, `ts`)은 `poses.json` 의 `ts` 와 같은 ARKit 시계(초)라 프레임과 바로 맞춰 볼 수 있습니다. `skippedPolls` = 저장할 차례였는데 흔들림(`blurry`) · 쓰기 대기(`busy`)로 건너뛴 폴링 수(10 Hz 라 프레임 수의 약 2배),
 `tracking` = 추적이 normal 이 아니었던 구간과 이유(처음 위치를 잡는 `initializing` 포함, `endTs` 가 없으면 끝까지 회복 못 함), `thermal` = 기기 발열 상태(`serious` 부터 iOS 가 성능을 낮춤),
 `focus.relocks` = ARKit · RoomPlan 이 초점 고정을 풀어 다시 잠근 횟수, `focus.note` = 잠그지 못한 이유.
+`exposure` = 셔터 상한(2026-11-18 이후 촬영본, 위 값은 예시): `capS` 걸려고 한 상한(초), `defaultMaxS` 걸기 전에 iOS 가 쓰던 상한, `appliedAtTs` 처음 건 시각(없으면 걸지 못한 것이고 이유는 `note`), `reapplied` iOS · ARKit · RoomPlan 이 되돌려서 다시 건 횟수, `longestS` 상한을 걸고 1초 뒤부터 실제로 쓰인 가장 긴 셔터.
+**`longestS` 가 `capS` 보다 길지 않으면 상한이 RoomPlan 과 함께 들은 것**입니다(`poses.json` 의 `exposureS` 로 프레임마다 볼 수도 있음). Apple 문서에는 RoomPlan 이 카메라 설정을 어떻게 다루는지가 없어서 촬영본으로 확인해야 합니다.
 `torch.events` = 손전등을 켜고 끈 기록(`auto` 어두워서 · `user` 화면 버튼 · `relight` iOS 가 꺼서 다시 켬 · `end` 촬영 끝). 손전등을 켠 프레임(`poses.json` 의 `torch: true`)은 빛이 카메라와 함께 움직여 밝기 · 그림자가 프레임마다 다릅니다.
 
 `meta.json` 의 `surfaceCoverage` (LiDAR + RoomPlan 촬영본, 2026-10-27 이후): `{ "walls": 0.91, "floor": 1.0, "overall": 0.92, "samples": 366, "blocked": 11, "minViews": 3 }` —
@@ -253,7 +260,7 @@ RoomPlan 벽(30 cm 간격) · 바닥(벽을 이어 만든 다각형 안, 40 cm �
 `furniture_shots.json` (가구마다 전체가 한 화면에 찍힌 프레임 — 다른 가구가 가린 정도는 기록만 하고 통과 여부엔 안 씀. objectId 는 `roomplan_structure.json` 과 같음):
 ```json
 { "version": 2, "frameCount": 153,
-  "rule": { "minFill": 0.3, "maxBlurPx": 6, "marginFrac": 0.02, "minSeen": 0.05, "twinTolM": 0.06, "yawGapDeg": 30 },
+  "rule": { "minFill": 0.3, "maxBlurPx": 3, "marginFrac": 0.02, "minSeen": 0.05, "twinTolM": 0.06, "yawGapDeg": 30 },
   "objects": [
     { "objectId": "…", "category": "chair", "label": "의자 2", "status": "full",
       "shots": [ { "frameId": 37, "score": 0.91, "visible": 1.0, "fill": 0.5, "viewYawDeg": 45.0, "distanceM": 1.86,
@@ -307,7 +314,7 @@ RoomPlan 벽(30 cm 간격) · 바닥(벽을 이어 만든 다각형 안, 40 cm �
 - **좌표계**: ARKit 월드 = **미터**, Y-up, 오른손. `T_wc` 는 camera→world, row-major, `ARCamera.transform` 그대로.
 - **카메라 축**: x 오른쪽, y 위, −z 정면 = OpenGL / nerfstudio `transforms.json` 규약. (COLMAP/OpenCV 는 y·z 부호 반대)
 - 모든 결과물(3DGS PLY, collision.glb, roomGeometry, objects)을 **이 미터 좌표계 그대로** 내보내 주세요. 그러면 앱에서 추가 변환 없이 겹칩니다.
-- 프레임은 **초당 최대 약 5장** 저장됩니다(10 Hz 로 확인, 저장 간격 0.18초 이상). 조건: 추적 상태 normal, 예상 흔들림 6 px 미만, 직전에 저장한 프레임에서 2 cm 이상 이동 또는 2° 이상 회전(가구 촬영은 1 cm) — 가만히 서 있으면 같은 사진을 쌓지 않습니다. 이 규칙은 `meta.json` 의 `sampling`(`pollHz` · `minIntervalS` · `minMoveM` · `minTurnDeg` · `maxBlurPx` · `jpegQuality`)에 적힙니다. 2026-10-25 이전 촬영본은 15 cm / 10° / 0.3초 / 10 px 규칙이고 이 키가 없습니다.
+- 프레임은 **초당 최대 약 5장** 저장됩니다(10 Hz 로 확인, 저장 간격 0.18초 이상). 조건: 추적 상태 normal, 예상 흔들림 3 px 미만, 직전에 저장한 프레임에서 2 cm 이상 이동 또는 2° 이상 회전(가구 촬영은 1 cm) — 가만히 서 있으면 같은 사진을 쌓지 않습니다. 이 규칙은 `meta.json` 의 `sampling`(`pollHz` · `minIntervalS` · `minMoveM` · `minTurnDeg` · `maxBlurPx` · `jpegQuality` · `maxExposureS`)에 적힙니다. `maxExposureS` 는 셔터 상한(초)이고 2026-11-18 이전 촬영본에는 없습니다(그때는 흔들림 한도 6 px). 2026-10-25 이전 촬영본은 15 cm / 10° / 0.3초 / 10 px 규칙이고 `sampling` 키가 없습니다.
 
 **깊이가 검게 보이는 이유**: `depth/*.png` 는 거리(mm)를 16비트 정수로 그대로 담은 **데이터**입니다. 방 안 거리는 250–5000 정도라
 0–65535 범위의 뷰어에서는 거의 검게 보이는 게 정상이고(confidence 도 0/1/2 라 검정), 사람이 볼 때는 `depth_vis/` · `confidence_vis/` 를 보면 됩니다.
@@ -405,8 +412,9 @@ s = 256 / pose["width"]; fx, fy, cx, cy = (pose["K"][k] * s for k in ("fx", "fy"
   "space3DInfo": { "status": "COMPLETED", "jobId": "j-1" } }                  // 입주 상태는 매물에 붙지 않는다 (사용자별)
 
 // SpaceResponse — 좌표는 모두 미터, ARKit 월드. yaw: +Y 축 반시계(위에서 볼 때), 도(°)
-{ "3dgsUri": "https://…/scene_current.ply",        // 3DGS (없으면 pointsUri 로 포인트클라우드 표시)
-  "pointsUri": "https://…/points.ply",              // 선택: 7–8주차 MVP 용 x y z r g b PLY
+{ "meshUri": "https://…/room.glb",                 // 방 메시: AI 의 원본 room.glb (면이 있는 PLY · OBJ 도 됨). 있으면 이것을 그린다. 백엔드가 붙이기로 함(11.19), pointsUri 도 같이 유지
+  "3dgsUri": "https://…/scene_current.ply",        // 3DGS (예전 방식. 이 자리에 .glb 나 메시 PLY 를 넣어 줘도 메시로 연다). 없으면 pointsUri 로 포인트클라우드 표시
+  "pointsUri": "https://…/points.ply",              // 지금 실서버가 보내는 것: AI 방 GLB 를 GPU 워커가 바꾼 색 점구름 x y z r g b PLY(약 50만 점). 이때 3dgsUri 는 null
   "collisionGeometryUri": "https://…/collision.glb",
   "spaceVersion": 1, "objectsVersion": 3,             // 다시 촬영하면 spaceVersion +1, 가구 구분을 바꾸면 objectsVersion +1
   "roomDimensions": { "width": 3.4, "depth": 2.8, "height": 2.35, "area": 9.52 },
@@ -419,6 +427,7 @@ s = 256 / pose["width"]; fx, fy, cx, cy = (pose["K"][k] * s for k in ("fx", "fy"
   "objects": [ { "objectId": "o3", "category": "bed", "position": {x,y,z},      // position = OBB 중심
                  "rotation": {"yaw": 90}, "dimensions": {"width": 2.0, "height": 0.5, "depth": 1.5},
                  "ownershipType": null,                                          // PERSONAL | RENTAL_OPTION | UNKNOWN(또는 null)
+                 "modelUri": "https://…/bed_1.glb",                              // 선택: room.glb 에서 잘라 낸 이 가구의 GLB. 원점 = 가구 바운딩 박스 중심인 로컬 좌표(미터, Y-up) → position 에 놓고 yaw 만큼 돌린다(백엔드 11.19)
                  "removable": true } ],                                          // false = 고정 설비(싱크대 등). 없으면 종류로 판단
   "glass": [ { "objectId": "glass-1", "glassKind": "window",                    // 선택: 서버가 LiDAR 로 찾은 투명 유리 (glass.json 의 objects 그대로)
                "position": {x,y,z}, "rotation": {"yaw": 1.0},                    // glassKind: window | door | wall | gap, position = 중심
@@ -456,8 +465,32 @@ SDK 연결 자리는 `App/Session.swift` 의 `SocialLogin.token(for:)` 하나입
   번들의 `Resources/Viewer` 와 내려받은 3D 파일(`AssetCache`, `dulleobang://app/assets/…`)을 1 MB 청크로 스트리밍합니다.
 - three.js / gaussian-splats-3d 는 기본적으로 jsDelivr CDN 에서 받습니다(인터넷 필요). 시연 때 불안하면
   `Resources/Viewer/vendor/README.txt` 대로 로컬 사본을 넣으면 자동으로 그쪽을 씁니다(설정 탭에 "앱 내장" 표시).
-- Swift → JS: `window.DV.loadScene / setMode('walk'|'overview') / resetView / setOverlay / setObjectOwnership / addFurniture / setFurnitureState / setFurnitureTransform / removeFurniture`
-- JS → Swift: `ready / loaded / progress / error / select / transform / furnitureLoaded`
+- **방은 넷 중 하나로 그립니다** (`viewer.js` 의 `sceneSource`, 위에서부터 먼저): ① 방 메시 `meshUri` — GLB/GLTF, 면이 있는 PLY, OBJ ② 3DGS `3dgsUri` — .ply/.splat/.ksplat
+  ③ 점 `pointsUri` ④ 아무것도 없으면 벽 · 가구 치수로 만든 상자 모형. 파일 종류는 확장자로 정하고 PLY 는 머리말을 읽어 정합니다(면이 있으면 메시, 가우시안 속성이 있으면 3DGS, 아니면 점).
+  그래서 서버가 예전 자리(`3dgsUri`)에 room.glb 나 메시 PLY 를 넣어 줘도 메시로 열립니다. 3DGS 라이브러리는 3DGS 파일을 받을 때만 불러옵니다.
+- **방 메시 (AI 팀 메시 파이프라인)**: `export_space.py` 가 만드는 ARKit 좌표의 `room.glb` 를 그대로 그립니다(glTF 도 미터 · Y-up 이라 변환 없음).
+  스캔한 사진 색에 그 방의 빛이 이미 들어 있어서 조명을 다시 입히지 않고(unlit), 실내에서 보므로 면의 앞뒤를 모두 그립니다. 색 정보(텍스처 · 꼭짓점 색)가 없는 메시만 조명을 받습니다.
+  압축된 GLB(`EXT_meshopt_compression`, `KHR_draco_mesh_compression`)도 열립니다(디코더는 three.js 와 같은 곳에서 받음).
+- **가구 GLB** (`objects[].modelUri`): 방 메시와 따로 온 가구를 그 가구 자리에 그립니다. ‘가구 빼 보기’ 미리보기와 입주 예상(`removedObjectIds`)은 이 모델을 숨기므로,
+  방 메시가 같으면 **지금 모습 ↔ 입주 예상을 바꿀 때 파일을 다시 읽지 않습니다.**
+  백엔드 규칙(11.19): 가구 GLB 는 원점 = 가구 바운딩 박스 중심인 로컬 좌표, `position` = 방 안의 중심, `rotation.yaw` = Y축 회전(도), 미터 → 뷰어 기본값 `center`.
+  GLB 가 원점에 놓여 있지 않으면(방 좌표로 저장된 경우 등) 범위를 보고 자리를 다시 고르고 콘솔에 경고를 남깁니다. `objectFrame: 'auto'` 를 넘기면 늘 범위로 고릅니다
+  (방 좌표 `world` · 상자 중심 `center` · 바닥 중심 `floor` · 이미 yaw 만큼 돌아간 `center-raw` · `floor-raw` · 크기가 안 맞으면 치수에 맞춰 늘리는 `fit`).
+- **스캔 속 가구 가리기**: 점구름에는 가구가 모두 들어 있으므로 ① 가구 GLB 가 떠 있는 가구의 상자 안 점은 늘 숨기고(두 겹 방지) ② 뺀 가구의 상자 안 점도 숨깁니다.
+  room.glb 는 가구 GLB 가 있는 가구가 이미 잘려 있고 분리되지 않은 가구만 붙어 있으므로(백엔드 11.19), 방 메시는 **GLB 가 없는 가구를 뺄 때만** 그 자리 삼각형을 숨깁니다.
+  서버가 가구를 빼고 새로 만든 입주 예상 파일(`room-states` 의 `pointsUri` · `sceneUri`)은 다시 가리지 않습니다(앱이 `sceneRemoved` 로 알려 줌).
+  상자는 4 cm 넉넉히 잡고 바닥 · 천장 · 벽(RoomPlan 벽선)에 붙은 3 cm 띠는 남깁니다. 삼각형은 무게중심으로 판단하고, 바닥 띠 안에서는 위를 향한 면(바닥)만 남깁니다.
+  인덱스를 통째로 복사하지 않고 상자 안 삼각형만 따로 들고 있다가 그리는 범위만 바꿉니다(삼각형 330만 개 시험 메시에서 처음 판단 0.2 초 · 가구 빼기 1 ms, PC 기준).
+- **메시가 안 열리면 점구름으로**: 뷰어가 방 메시를 못 읽으면(`meshFailed`) 또는 메모리가 모자라 웹 프로세스가 죽으면(`webViewWebContentProcessDidTerminate` → `crashed`) 앱이 뷰어를 다시 띄우고,
+  `pointsUri`(또는 3DGS)가 있으면 그 화면에서는 점구름으로 다시 엽니다(가구 GLB 도 받지 않음 · 안내 문구). 점구름으로도 두 번 죽으면 다시 열지 않고 알립니다.
+- **점구름 (지금 실서버가 보내는 것)**: 백엔드는 AI 의 방 GLB 를 색 점구름 PLY 로 바꿔 `pointsUri` 로 보냅니다(`3dgsUri` = null, 백엔드 문서 2026.11.18).
+  점 크기는 점 간격에 맞춥니다(점 수와 범위로 평균 간격을 재서 그 2.6배를 실제 지름으로, 화각이 바뀌면 다시 계산) → 50만 점이면 지름 약 3.3 cm, 벽에 빈틈이 거의 안 보입니다.
+  가구도 점 안에 들어 있으므로 ‘가구 빼 보기’ 미리보기와 입주 예상에서는 뺀 가구의 상자(4 cm 넉넉히) 안 점을 앱이 숨깁니다. 바닥 · 천장 · 벽에 붙은 3 cm 띠는 남기고,
+  점이 여러 상자에 들면 가장 작은 상자의 것으로 봅니다(책상 밑 의자). 빈자리를 채우지는 않으므로 가구 밑은 비어 보입니다. 같은 점 파일이면 지금 모습 ↔ 입주 예상을 바꿀 때 다시 읽지 않습니다.
+- 서버가 방 구조(`roomGeometry`)를 안 주면 뷰어가 방 메시의 크기에서 바닥 · 천장 · 걸을 수 있는 범위를 잡아 앱에 알립니다(`bounds`).
+- **설정 › 3D 뷰어 시험 › 3D 파일 열어 보기**: 파일 앱 · AirDrop 으로 받은 `room.glb`(또는 .ply · .obj) 하나를 서버 없이 이 뷰어로 엽니다. AI 팀 결과가 폰에서 열리는지 · 어떻게 보이는지 확인하는 용도입니다.
+- Swift → JS: `window.DV.loadScene / setMode('walk'|'overview') / resetView / setOverlay / setObjectOwnership / setRemovedObjects / addFurniture / setFurnitureState / setFurnitureTransform / removeFurniture`
+- JS → Swift: `ready / loaded / progress / error / select / transform / furnitureLoaded / bounds`
 - **충돌 판정은 Swift(`CollisionChecker`)가 합니다.** JS 는 드래그 중 위치를 보내고 결과 색(초록/빨강)만 칠합니다 → 규칙이 한 곳에만 있고 XCTest 로 검증됩니다.
 - 조작: 1인칭 = 한 손가락 둘러보기, 두 손가락 끌기 = 이동 · 오므리기 = 넓게(화각 30–100°, 가장 넓으면 뒤로 물러남) · 벌리기 = 가깝게 / 평면뷰 = 위에서 내려다보며 시작, 한 손가락 회전·기울이기, 핀치 줌, 두 손가락 이동 / 가구 = **눌러서 고른 뒤** 끌어서 옮기기(고르지 않은 가구 위에서는 카메라 조작이라 가구가 많아도 줌 · 둘러보기가 됨), 카드의 ⟲⟳ 로 15° 회전. 초기화(↺) = 처음 시점 · 화각, 가구를 추가하면 자동으로 평면뷰.
 - 평면뷰는 카메라 near plane 을 천장 너머로 밀어 천장을 걷어낸 것처럼 보입니다(스플랫·포인트·메시 공통 트릭).
@@ -482,4 +515,13 @@ Xcode › Product › Test (시뮬레이터 가능). 충돌 판정 13개 시나�
 - 채팅은 3초 폴링입니다. 서버에 WebSocket/STOMP 가 생기면 `ChatRoomView.refresh` 를 교체하세요. 알림 화면은 빈 상태만 있습니다.
 - 서버에 중개사 인증 API 가 없으면 디버그 빌드에서는 기기에만 "승인" 상태로 저장해 인증 중개사 흐름을 볼 수 있습니다(설정 › 중개사 모드). 매물 등록 자체는 인증 없이도 됩니다.
 - 지도는 서버 좌표(latitude/longitude)를 쓰고, 없으면 기기에서 주소를 지오코딩합니다(호수·동 표기는 쉼표 앞까지만 사용).
+- **방 메시는 아직 실제 AI 결과로 확인하지 못했습니다.** 시험용 GLB(텍스처 방 + 가구 6개) · 메시 PLY · OBJ · 압축 GLB 로 PC 브라우저에서만 확인했습니다. 실제 room.glb 는 삼각형 약 190만 개에
+  8192 px 텍스처가 여러 장이라, 폰(WKWebView)에서 메모리가 버티는지는 ‘3D 파일 열어 보기’로 먼저 봐야 합니다. 안 열리면 AI 쪽에서 삼각형 수 · 텍스처 크기(4096 px)를 줄인 앱용 GLB 가 필요합니다.
+  백엔드가 원본 room.glb 와 가구별 GLB 를 `meshUri` · `objects[].modelUri` 로 붙이기로 했습니다(11.19, `pointsUri` 도 유지). 가구 GLB = 바운딩 박스 중심 원점의 로컬 좌표,
+  room.glb = 분리된 가구는 잘려 있고 분리되지 않은 가구만 붙어 있음. 다만 11.19 배포 확인 때 운영 DB 에 `meshUri` 를 줄 수 있는 공개 매물이 0건이라 실제 파일로는 아직 못 봤습니다.
+- 점구름은 시험용으로 만든 50만 점 PLY 로 PC 브라우저에서만 확인했습니다. 실서버 매물에서 점구름과 방 구조(`roomGeometry`) · 가구 상자가 같은 좌표로 겹치는지는 아직 모릅니다.
+  입주 예상(`room-states`)은 PR #2 기반 작업이 끝나면 가구를 뺀 새 PLY 의 `pointsUri` 와 `remainingObjects` 를 같이 준다고 합니다(11.19 답변). 앱은 그것을 쓰고, 안 와도 뺀 가구 자리의 점을 숨깁니다.
+- 내 가구의 SAM 3D 가져오기(`POST /furniture/sam3d-imports`)는 앱에 화면이 없습니다. 백엔드 명세(11.19): Bearer 토큰 + `Idempotency-Key` 헤더, JSON `{studioJobId, name, category}`,
+  응답에 모델 URL 과 `dimensions`(width · height · depth, 미터, 생성할 때 입력한 값). 뷰어는 GLB 를 이 크기에 맞춰 늘리므로 GLB 가 Y-up 이고 가로 = x · 깊이 = z 여야 합니다(실제 파일로 미확인).
+- 서버가 http 라 이메일 비밀번호와 액세스 · 갱신 토큰이 암호화 없이 오갑니다(백엔드도 확인, 11.19). HTTPS 로 바뀌면 `AppConfig.defaultBaseURL` 을 고치고 `project.yml` 의 `NSAllowsArbitraryLoads` 를 지우세요.
 - 큰 3DGS PLY(수백 MB)는 모바일 메모리에 부담입니다. AI 쪽에서 `.ksplat` 변환이나 SH 차수 축소(0~1차)를 권장합니다 — 뷰어는 `.ply/.splat/.ksplat` 확장자를 모두 받습니다.

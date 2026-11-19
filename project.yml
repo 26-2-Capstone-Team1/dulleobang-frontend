@@ -49,8 +49,8 @@ targets:
         NSCameraUsageDescription: 매물 공간과 가구를 3D 로 만들기 위해 카메라로 촬영합니다.
         NSLocalNetworkUsageDescription: 같은 Wi-Fi 의 개발 서버에 촬영 데이터를 올리기 위해 로컬 네트워크에 접속합니다.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true   # 개발용 (http 로컬 서버). 배포 전에는 https 로 바꾸고 제거
-          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true   # 개발용: http 팀 서버(IP 주소라 예외 도메인으로 못 넣음)와 로컬 서버. 서버가 https 가 되면 제거
+          # NSAllowsLocalNetworking 은 넣지 않는다: 이 키가 있으면 iOS 가 NSAllowsArbitraryLoads 를 무시해서 http 팀 서버에 못 붙는다
         UIFileSharingEnabled: true       # 파일 앱에서 captures/ 의 zip 을 꺼낼 수 있게
         LSSupportsOpeningDocumentsInPlace: true
   DulleobangTests:
