@@ -146,9 +146,11 @@ enum RoomPlanExport {
                                                depth: Double(o.dimensions.z)),
                         ownershipType: nil)
         }
+        // 방 크기는 벽으로 잰다 (축에 맞춘 범위는 방이 비스듬하면 실제보다 크다, 11.19)
+        let f = Room.footprint(of: walls)
         return Structure(roomGeometry: geometry,
-                         roomDimensions: RoomDimensions(width: maxX - minX, depth: maxZ - minZ, height: ceilingH,
-                                                        area: (maxX - minX) * (maxZ - minZ)),
+                         roomDimensions: RoomDimensions(width: f?.width ?? maxX - minX, depth: f?.depth ?? maxZ - minZ, height: ceilingH,
+                                                        area: f?.area ?? (maxX - minX) * (maxZ - minZ)),
                          objects: objects)
     }
 

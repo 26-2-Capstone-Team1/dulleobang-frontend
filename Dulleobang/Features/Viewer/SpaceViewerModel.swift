@@ -272,8 +272,9 @@ final class SpaceViewerModel: ObservableObject {
     }
 
     private static func dimensionsText(_ d: RoomDimensions?, _ r: Room) -> String {
-        let w = d?.width ?? r.width, dp = d?.depth ?? r.depth, h = d?.height ?? (r.ceilingY - r.floorY)
-        let area = d?.area ?? w * dp
+        let f = r.footprint                                     // 벽으로 잰 크기가 있으면 그것 (서버 값은 축에 맞춘 범위일 수 있다)
+        let w = f?.width ?? d?.width ?? r.width, dp = f?.depth ?? d?.depth ?? r.depth, h = d?.height ?? (r.ceilingY - r.floorY)
+        let area = f?.area ?? d?.area ?? w * dp
         return String(format: "%.2f × %.2f m · 층고 %.2f m · ", w, dp, h) + Fmt.area(area)
     }
 

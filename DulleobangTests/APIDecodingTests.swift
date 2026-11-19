@@ -49,6 +49,31 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertFalse(SceneAsset.isMesh("/files/scene.ksplat"))
     }
 
+    /// 방 크기는 벽으로 잰다: 31° 돌아간 2.73 × 3.09 m 방(실서버 시험 매물)이 축에 맞춘 범위로는 3.9 × 4.1 m 가 된다
+    func testRoomFootprintUsesWallsNotAxisBox() {
+        func walls(_ pts: [(Double, Double)]) -> [Wall] {
+            pts.indices.map { i in
+                let a = pts[i], b = pts[(i + 1) % pts.count]
+                return Wall(id: "w\(i)", from: [a.0, a.1], to: [b.0, b.1], height: 2.3)
+            }
+        }
+        let t = 31.0 * Double.pi / 180
+        let c = cos(t), s = sin(t)
+        var rect: [(Double, Double)] = []
+        for (x, z) in [(0.0, 0.0), (2.73, 0.0), (2.73, 3.09), (0.0, 3.09)] { rect.append((x * c - z * s, x * s + z * c)) }
+        let f = Room.footprint(of: walls(rect))
+        XCTAssertEqual(min(f?.width ?? 0, f?.depth ?? 0), 2.73, accuracy: 0.01)
+        XCTAssertEqual(max(f?.width ?? 0, f?.depth ?? 0), 3.09, accuracy: 0.01)
+        XCTAssertEqual(f?.area ?? 0, 2.73 * 3.09, accuracy: 0.02)
+        let room = Room(geometry: RoomGeometry(floorHeight: 0, ceilingHeight: 2.3, walls: walls(rect), doors: nil, windows: nil,
+                                               boundingBox: nil), dimensions: nil, objects: [])
+        XCTAssertGreaterThan(room.width * room.depth, 15, "축에 맞춘 범위는 실제(8.4㎡)보다 훨씬 크다")
+        // ㄱ자 방: 넓이는 다각형으로 (범위 상자 16㎡ 가 아니라 12㎡)
+        let ell = Room.footprint(of: walls([(0, 0), (4, 0), (4, 2), (2, 2), (2, 4), (0, 4)]))
+        XCTAssertEqual(ell?.area ?? 0, 12, accuracy: 0.01)
+        XCTAssertNil(Room.footprint(of: []))
+    }
+
     /// 실서버 백엔드 응답 (2026.11.18 문서 · 11.19 답변): 공간 = 색 점구름 pointsUri + roomGeometry, 3dgsUri 는 null.
     /// 원본 room.glb · 가구별 GLB 는 meshUri · objects[].modelUri 로 붙을 예정. 입주 예상 = 가구를 뺀 새 PLY 의 pointsUri + remainingObjects
     func testBackendPointCloudSpaceAndRoomState() throws {

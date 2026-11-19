@@ -250,13 +250,14 @@ struct ListingDetailView: View {
     private func spaceSummary(_ s: SpaceResponse) -> some View {
         let room = Room(space: s)
         let d = s.roomDimensions
-        let w = d?.width ?? room.width, dp = d?.depth ?? room.depth
+        let f = room.footprint                                  // 벽으로 잰 크기가 있으면 그것 (서버 값은 축에 맞춘 범위일 수 있다)
+        let w = f?.width ?? d?.width ?? room.width, dp = f?.depth ?? d?.depth ?? room.depth
         let h = d?.height ?? (room.ceilingY - room.floorY)
         return VStack(alignment: .leading, spacing: 2) {
             Text("LiDAR 실측").font(.caption.weight(.bold)).foregroundStyle(DB.accent)
             Text(String(format: "%.2f × %.2f m", w, dp)).font(.title3.weight(.heavy)).foregroundStyle(DB.ink)
                 .lineLimit(1).minimumScaleFactor(0.8)
-            Text("층고 \(Fmt.m(h)) · \(Fmt.area(d?.area ?? w * dp))").font(.caption).foregroundStyle(DB.sub)
+            Text("층고 \(Fmt.m(h)) · \(Fmt.area(f?.area ?? d?.area ?? w * dp))").font(.caption).foregroundStyle(DB.sub)
                 .lineLimit(1).minimumScaleFactor(0.8)
             Text("문 \(room.doors.count) · 창 \(room.windows.count) · 가구 \(s.objects.count)개").font(.caption).foregroundStyle(DB.sub)
         }
