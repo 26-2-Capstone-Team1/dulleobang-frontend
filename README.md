@@ -361,7 +361,7 @@ s = 256 / pose["width"]; fx, fy, cx, cy = (pose["K"][k] * s for k in ("fx", "fy"
 
 | 메서드 | 경로 | 요청 | 응답 |
 |---|---|---|---|
-| POST | `/auth/signup` | `{email, password(12~128자), displayName}` | `201 User` (토큰 없음 → 앱이 이어서 login) · 중복 이메일 409 |
+| POST | `/auth/signup` | `{email, password(8~128자), displayName}` | `201 User` (토큰 없음 → 앱이 이어서 login) · 중복 이메일 409 |
 | POST | `/auth/login` | `{email, password}` | `TokenPair {accessToken, refreshToken, expiresIn, user{userId, email, displayName, roles}}` · 틀리면 401 |
 | POST | `/auth/oauth/kakao` · `/auth/oauth/google` | 카카오 `{accessToken}` · 구글 `{idToken}` (SDK 가 준 토큰, 서버가 검증) | `TokenPair` |
 | POST | `/auth/refresh` | `{refreshToken}` | `TokenPair` (refresh 토큰도 매번 새로) · 만료 401 → 앱이 로그아웃 |

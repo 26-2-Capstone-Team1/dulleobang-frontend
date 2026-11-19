@@ -436,7 +436,9 @@ actor MockBackend {
         guard let req = decodeBody(SignupRequest.self, body) else { return fail(400, "가입 정보를 읽지 못했습니다") }
         let email = req.email.trimmed.lowercased()
         guard email.contains("@") else { return fail(422, "이메일 형식이 올바르지 않습니다") }
-        guard (12...128).contains(req.password.count) else { return fail(422, "비밀번호는 12자 이상 128자 이하로 입력해 주세요") }
+        guard SignupRequest.passwordLength.contains(req.password.count) else {
+            return fail(422, SignupRequest.passwordLengthMessage)
+        }
         let name = req.displayName.trimmed
         guard !name.isEmpty else { return fail(422, "이름을 입력해 주세요") }
         let userId = Self.stableUserId("email:" + email)           // 같은 이메일의 카카오 · 구글 계정과 자동으로 합치지 않는다
