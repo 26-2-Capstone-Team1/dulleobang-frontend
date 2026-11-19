@@ -40,6 +40,8 @@ final class AppConfig {
     var lockFocus: Bool { UserDefaults.standard.object(forKey: "lockFocus") as? Bool ?? true }   // 촬영 중 초점 고정 (설정(개발자)에서 끌 수 있음)
     let focusLockAfterS: Double = 2.0       // 첫 프레임에서 이만큼 뒤(자동 초점이 방에 맞춰진 뒤) 초점을 잠근다
     var autoTorch: Bool { UserDefaults.standard.object(forKey: "autoTorch") as? Bool ?? true }   // 어두우면 손전등 자동으로 켜기 (설정(개발자)에서 끌 수 있음)
+    var capShutter: Bool { UserDefaults.standard.object(forKey: "capShutter") as? Bool ?? true }   // 촬영 중 셔터 상한 (설정(개발자)에서 끌 수 있음)
+    let maxExposureS: Double = 1.0 / 120    // 셔터 상한 (AI 팀 요청): 어두워도 이보다 길게 열지 않는다 → 같은 속도에서 번짐이 절반. 60 Hz 조명 아래에서 줄무늬가 생기지 않는 값이기도 하다
     var useRoomPlan: Bool { UserDefaults.standard.object(forKey: "useRoomPlan") as? Bool ?? true }
 
     // 뷰어 / 배치

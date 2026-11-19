@@ -214,9 +214,9 @@ enum CaptureAlert: String, CaseIterable, Equatable {
 ///    (실제 촬영본 capture 3: 바닥 사진 152장 중 2장 → 걸어온 길의 18% → 3DGS 바닥에 구멍. 이 경고가 93초에 떴을 것)
 struct CaptureCoach {
     struct Config {
-        var warnBlurPx = 5.0             // 예상 흔들림(px, 컬러 1920 폭 기준)이 이 이상이면 '너무 빨라요' — 사진을 버리기(skipBlurPx) 직전에만 (1/60초면 초당 약 13°)
-        var skipBlurPx = 6.0             // 이 이상 흔들린 프레임은 저장하지 않는다 (CaptureRecorder 가 사용. 가구 전체 사진 기준 maxBlurPx 와 같음)
-        var darkExposureS = 1.0 / 75     // 흔들릴 때 셔터(평활)가 이보다 길면 '어두워서 흔들려요'. ARKit 은 60 fps 라 최대 1/60초
+        var warnBlurPx = 2.5             // 예상 흔들림(px, 컬러 1920 폭 기준)이 이 이상이면 '너무 빨라요' — 사진을 버리기(skipBlurPx) 직전에만 (1/120초면 초당 약 13°)
+        var skipBlurPx = 3.0             // 이 이상 흔들린 프레임은 저장하지 않는다 (CaptureRecorder 가 사용. 가구 전체 사진 기준 maxBlurPx 와 같음). 2026-11-18 AI 팀 요청으로 6 → 3 (경고는 5 → 2.5)
+        var darkExposureS = 1.0 / 75     // 흔들릴 때 셔터(평활)가 이보다 길면 '어두워서 흔들려요'. ARKit 은 60 fps 라 최대 1/60초. 셔터 상한(1/120초)이 걸려 있으면 여기까지 길어지지 않아 '너무 빨라요' 만 뜬다
         var tooCloseM = 0.45             // 화면 가운데 깊이가 이보다 가까우면 '너무 가까워요'
         var featurelessScore = 6.0       // 밝기 변화 점수가 이보다 낮으면 '무늬 없는 면' (화이트보드 3.4 · 보통 장면 10 이상)
         var stillAfterS = 15.0           // 촬영 시작 후 이만큼 지났는데

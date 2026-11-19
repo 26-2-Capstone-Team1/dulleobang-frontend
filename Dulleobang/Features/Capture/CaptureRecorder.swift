@@ -79,6 +79,7 @@ struct CaptureMeta: Codable {
         var minTurnDeg: Double           // 이만큼 돌았을 때 (가만히 서 있으면 저장하지 않음)
         var maxBlurPx: Double            // 예상 흔들림(poses.json 의 blurPx 와 같은 단위)이 이 이상이면 저장하지 않음
         var jpegQuality: Double
+        var maxExposureS: Double? = nil  // 셔터 상한(초): 자동 노출이 이보다 길게 열지 않게 건 값. 없으면 걸지 않은 촬영본 (실제로 걸렸는지는 capture_log.json 의 exposure)
     }
 }
 
@@ -95,6 +96,17 @@ struct CaptureLog: Codable, Equatable {
     var focus = Focus()
     var depthSources: [String: Int] = [:]    // 저장한 프레임의 깊이 출처별 장 수 (sceneDepth · smoothedSceneDepth)
     var torch = TorchLog()                   // 손전등 (어두우면 앱이 켬 · 화면 버튼으로 켜고 끔)
+    var exposure = ExposureLog()             // 셔터 상한을 걸었는지 · 실제로 쓰인 가장 긴 셔터 (2026-11-18 이후)
+
+    struct ExposureLog: Codable, Equatable {
+        var capEnabled = false               // 설정(개발자) › 셔터 상한
+        var capS: Double?                    // 걸려고 한 상한 (초)
+        var defaultMaxS: Double?             // 걸기 전에 iOS 가 쓰던 상한 (초)
+        var appliedAtTs: Double?             // 처음 건 ARKit 시각 (nil = 걸지 못했거나 꺼 둠)
+        var reapplied = 0                    // iOS · ARKit · RoomPlan 이 되돌려서 다시 건 횟수
+        var longestS: Double?                // 상한을 걸고 1초 뒤부터 실제로 쓰인 가장 긴 셔터 (초). capS 보다 길면 상한이 듣지 않은 때가 있었던 것
+        var note: String?                    // 걸지 못한 이유
+    }
 
     struct TorchLog: Codable, Equatable {
         var autoEnabled = false              // 설정(개발자) › 어두우면 손전등 자동으로 켜기 (손전등이 없는 기기면 false)
@@ -204,10 +216,58 @@ enum FocusLock {
     }
 }
 
-/// 어두운지 (손전등 자동 켜기). 셔터가 이미 최대(1/60초)인데 ISO 가 높으면 어두운 것 — 사진이 흔들리고 거칠어지기 시작하는 때.
+/// 셔터 상한 (AI 팀 요청, 2026-11-18). 어두운 방에서 자동 노출이 셔터를 1/60초까지 늘리면 천천히 움직여도 사진이 번진다.
+/// 상한(AppConfig.maxExposureS, 1/120초)을 걸면 같은 속도에서 번짐이 절반이 되고, 모자란 밝기는 자동 노출이 ISO 를 올려 채운다(그만큼 거칠어진다).
+/// 초점 고정과 같은 길 — ARKit 1× 카메라(AVCaptureDevice)의 activeMaxExposureDuration — 이라 RoomPlan 이 세션 설정을 정해도 쓸 수 있다.
+/// 카메라 포맷이 바뀌면 iOS 가 이 값을 기본값으로 되돌리므로(Apple 문서) CaptureRecorder 가 1초에 한 번 확인해서 다시 건다
+enum ExposureCap {
+    private static var device: AVCaptureDevice? { ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera }
+
+    static var isAvailable: Bool { device != nil }
+
+    /// 지금 자동 노출이 쓸 수 있는 가장 긴 셔터 (초). 읽을 수 없으면 nil
+    static var currentS: Double? {
+        guard let t = device?.activeMaxExposureDuration, t.isNumeric else { return nil }
+        return t.seconds
+    }
+
+    /// 이 카메라 포맷이 올릴 수 있는 가장 높은 ISO (어두움 판정용)
+    static var maxISO: Double? { device.map { Double($0.activeFormat.maxISO) } }
+
+    /// 상한을 seconds 로 건다. 실패하면 이유를 돌려준다
+    static func apply(seconds: Double) -> String? {
+        guard let d = device else { return "configurableCaptureDeviceForPrimaryCamera 없음" }
+        // 포맷이 지원하는 범위 밖의 값을 넣으면 예외가 나서 앱이 죽는다(Apple 문서) → 범위 안으로 맞춰서 넣는다
+        let format = d.activeFormat
+        let value = CMTimeMaximum(CMTimeMinimum(CMTime(seconds: seconds, preferredTimescale: 1_000_000), format.maxExposureDuration),
+                                  format.minExposureDuration)
+        do {
+            try d.lockForConfiguration()
+            d.activeMaxExposureDuration = value
+            d.unlockForConfiguration()
+            return nil
+        } catch {
+            return "lockForConfiguration 실패: \(error.localizedDescription)"
+        }
+    }
+
+    /// iOS 기본값으로 되돌린다 (촬영이 끝난 뒤)
+    static func reset() {
+        guard let d = device else { return }
+        do {
+            try d.lockForConfiguration()
+            d.activeMaxExposureDuration = .invalid
+            d.unlockForConfiguration()
+        } catch {}
+    }
+}
+
+/// 어두운지 (손전등 자동 켜기). 셔터가 이미 가장 길게 열렸는데(셔터 상한 1/120초, 상한을 껐으면 1/60초) ISO 가 높으면 어두운 것 — 사진이 거칠어지기 시작하는 때.
 /// ISO 를 모르면 ARKit 조명 추정(ambientIntensity, 1000 lm ≈ 보통 밝기)을 본다. darkForS 초 이어져야 켤 때가 된 것
 struct DarknessMeter {
-    var darkISO = 1000.0             // 셔터 1/61초 이상에서 ISO 가 이 이상이면 어두움
+    var maxExposureS = 1.0 / 60      // 자동 노출이 쓸 수 있는 가장 긴 셔터 (셔터 상한을 걸었으면 그 값)
+    var darkISO = 1000.0             // 셔터가 가장 길게 열렸을 때, 1/60초로 환산한 ISO 가 이 이상이면 어두움 (1/120초에서는 실제 ISO 2000)
+    var maxISO: Double?              // 카메라가 올릴 수 있는 가장 높은 ISO. 여기에 거의 닿았으면(90%) 환산값과 상관없이 어두움
     var darkLumens = 250.0           // ISO 를 모를 때 조명 추정이 이보다 낮으면 어두움
     var darkForS = 2.0               // 이만큼 이어져야 켠다 (어두운 구석을 잠깐 스친 것은 무시)
     private(set) var darkSince: Double?
@@ -217,7 +277,11 @@ struct DarknessMeter {
     /// 이번 폴링이 어두운지 넣고, 손전등을 켤 때가 됐으면 true
     mutating func update(time: Double, ambientLumens: Double?, exposureS: Double?, iso: Double?) -> Bool {
         let dark: Bool
-        if let iso, let e = exposureS { dark = e >= 1.0 / 61 && iso >= darkISO }
+        if let iso, let e = exposureS {
+            let pinned = e >= maxExposureS * 0.97                     // 셔터를 더 늘릴 여유가 없음 (상한이 안 걸려 더 길어진 것도 포함)
+            let nearMaxISO = maxISO.map { iso >= $0 * 0.9 } ?? false
+            dark = pinned && (iso * e * 60 >= darkISO || nearMaxISO)
+        }
         else if let lm = ambientLumens { dark = lm < darkLumens }
         else { dark = false }
         if dark { darkSince = darkSince ?? time } else { darkSince = nil }
@@ -312,6 +376,9 @@ final class CaptureRecorder {
     private var lastThermal: ProcessInfo.ThermalState?                // 마지막으로 기록한 발열 상태
     private var focusCheckedAt = -Double.infinity                     // 초점을 마지막으로 확인한 시각 (잠근 뒤에는 2초에 한 번)
     private var focusGaveUp = false                                   // 초점을 잠글 수 없는 기기 → 다시 시도하지 않는다
+    private var exposureCheckedAt = -Double.infinity                  // 셔터 상한을 마지막으로 확인한 시각 (1초에 한 번)
+    private var exposureGaveUp = false                                // 상한을 걸 수 없는 기기 → 다시 시도하지 않는다
+    private var exposureSettledAt = Double.infinity                   // 상한을 건 뒤 자동 노출이 따라왔다고 보는 시각 (그 뒤부터 가장 긴 셔터를 적는다)
     private var coverage = CoverageTracker()                          // 벽 · 바닥이 사진 몇 장에 나왔는지 (방 촬영 · RoomPlan)
     private var darkness = DarknessMeter()                            // 어두운지 (손전등 자동 켜기)
     private let torchAvailable = Torch.isAvailable
@@ -366,7 +433,8 @@ final class CaptureRecorder {
                                     minMoveM: (Double(sampler.minTranslation) * 1000).rounded() / 1000,
                                     minTurnDeg: (Double(sampler.minRotationRad) * 180 / .pi * 100).rounded() / 100,
                                     maxBlurPx: coach.config.skipBlurPx,
-                                    jpegQuality: (Double(cfg.jpegQuality) * 100).rounded() / 100)
+                                    jpegQuality: (Double(cfg.jpegQuality) * 100).rounded() / 100,
+                                    maxExposureS: captureLog.exposure.capEnabled ? (cfg.maxExposureS * 1_000_000).rounded() / 1_000_000 : nil)
     }
 
     init(session: ARSession, kind: CaptureKind) throws {
@@ -381,6 +449,7 @@ final class CaptureRecorder {
         coach = CaptureCoach(config: coachConfig, checksWalking: kind == .room)
         var shotConfig = FurnitureShotConfig()
         shotConfig.wideCameraAvailable = kind == .room && UltraWideCamera.isAvailable
+        shotConfig.maxBlurPx = coachConfig.skipBlurPx                   // 저장하지 않을 만큼 흔들린 프레임이 '전체 사진'으로 통과하지 않게 같은 한도를 쓴다
         shots = FurnitureShotTracker(config: shotConfig)
         dir = Self.root.appendingPathComponent(captureId, isDirectory: true)
                        .appendingPathComponent("capture", isDirectory: true)
@@ -399,6 +468,12 @@ final class CaptureRecorder {
         captureLog.focus.lockEnabled = AppConfig.shared.lockFocus
         if captureLog.focus.lockEnabled { FocusLock.unlock() }          // 지난 촬영에서 남은 고정은 풀고, 방에 초점이 맞은 뒤 다시 잠근다
         captureLog.torch.autoEnabled = AppConfig.shared.autoTorch && torchAvailable
+        captureLog.exposure.capEnabled = AppConfig.shared.capShutter
+        if captureLog.exposure.capEnabled {
+            captureLog.exposure.capS = (AppConfig.shared.maxExposureS * 1_000_000).rounded() / 1_000_000
+            darkness.maxExposureS = AppConfig.shared.maxExposureS      // 손전등: '셔터가 가장 길게 열렸는지' 를 상한 기준으로 본다
+        }
+        darkness.maxISO = ExposureCap.maxISO
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / AppConfig.shared.sampleHz, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -410,6 +485,7 @@ final class CaptureRecorder {
         timer?.invalidate()
         timer = nil
         if captureLog.focus.lockedAtTs != nil { FocusLock.unlock() }    // 다음 촬영 · 다른 화면은 다시 자동 초점
+        if captureLog.exposure.appliedAtTs != nil { ExposureCap.reset() }   // 셔터 상한도 iOS 기본값으로 되돌린다
         if torchWanted || (torchAvailable && Torch.isOn) {                // 촬영이 끝나면 손전등도 끈다
             Torch.turnOff()
             if torchWanted { captureLog.torch.events.append(.init(ts: captureLog.endTs ?? 0, on: false, by: "end")) }
@@ -529,6 +605,7 @@ final class CaptureRecorder {
             lastThermal = thermal
             captureLog.thermal.append(.init(ts: frame.timestamp, state: thermal.logName))
         }
+        updateExposureCap(time: frame.timestamp, exposure: exposure)
         updateFocusLock(time: frame.timestamp, tracking: tracking)
         updateTorch(frame, time: frame.timestamp, exposure: exposure)
         defer { publish(tracking: tracking, hasDepth: depthData != nil, time: frame.timestamp, camera: cam.transform) }
@@ -661,7 +738,45 @@ final class CaptureRecorder {
         }
     }
 
-    /// 손전등: 촬영을 시작하고 2초 뒤부터 어두움(셔터 최대인데 ISO 1000 이상, ISO 를 모르면 조명 추정 250 lm 미만)이 2초 이어지면 켜고
+    /// 셔터 상한: 첫 폴링부터 건다. 카메라 포맷이 바뀌면 iOS 가 기본값으로 되돌리므로(ARKit · RoomPlan 이 세션을 다시 설정할 때 등)
+    /// 1초에 한 번 확인해서 다시 건다 (capture_log.json 의 exposure.reapplied). 걸고 1초 뒤부터는 실제로 쓰인 가장 긴 셔터를 적는다 —
+    /// 상한이 RoomPlan 과 함께 듣는지 촬영본으로 확인하려고
+    private func updateExposureCap(time: Double, exposure: Double?) {
+        guard captureLog.exposure.capEnabled, !exposureGaveUp else { return }
+        if let exposure, time >= exposureSettledAt {
+            captureLog.exposure.longestS = max(captureLog.exposure.longestS ?? 0, (exposure * 1_000_000).rounded() / 1_000_000)
+        }
+        guard time - exposureCheckedAt >= 1 else { return }
+        exposureCheckedAt = time
+        guard ExposureCap.isAvailable else {
+            exposureGaveUp = true
+            captureLog.exposure.note = "configurableCaptureDeviceForPrimaryCamera 없음"
+            return
+        }
+        let want = AppConfig.shared.maxExposureS
+        let current = ExposureCap.currentS
+        if let current, abs(current - want) <= want * 0.02 { return }   // 걸려 있음
+        if let reason = ExposureCap.apply(seconds: want) {
+            exposureGaveUp = true
+            captureLog.exposure.note = reason
+            return
+        }
+        if let now = ExposureCap.currentS, abs(now - want) > want * 0.02 {   // 이 카메라 포맷은 그 값으로 걸 수 없음 → 매초 다시 걸지 않는다
+            exposureGaveUp = true
+            captureLog.exposure.note = String(format: "상한이 걸리지 않음 (걸고 나서 읽은 값 %.4f초)", now)
+            return
+        }
+        exposureSettledAt = time + 1                                    // 자동 노출이 새 상한을 따라올 시간
+        darkness.maxISO = ExposureCap.maxISO
+        if captureLog.exposure.appliedAtTs == nil {
+            captureLog.exposure.appliedAtTs = time
+            captureLog.exposure.defaultMaxS = current.map { ($0 * 1_000_000).rounded() / 1_000_000 }
+        } else {
+            captureLog.exposure.reapplied += 1
+        }
+    }
+
+    /// 손전등: 촬영을 시작하고 2초 뒤부터 어두움(셔터가 가장 길게 열렸는데 1/60초로 환산한 ISO 가 1000 이상, ISO 를 모르면 조명 추정 250 lm 미만)이 2초 이어지면 켜고
     /// 끝날 때까지 켜 둔다 (켜면 밝아 보여 다시 잴 수 없음). 사람이 버튼으로 끄면 이 촬영에서는 다시 켜지 않는다.
     /// iOS 가 꺼 버리면(세션을 다시 설정할 때 등) 2초에 한 번까지 다시 켠다
     private func updateTorch(_ frame: ARFrame, time: Double, exposure: Double?) {

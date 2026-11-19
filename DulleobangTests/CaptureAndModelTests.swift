@@ -109,7 +109,7 @@ final class CaptureCoachTests: XCTestCase {
     func testSpinningWhileShufflingIsATipNotAWarning() {
         // 옆으로 거의 안 걷고(초당 5 cm) 돌기만(초당 12°) → 1° 에 0.42 cm. 경고는 띄우지 않고 안내 문구에 팁만 (AI 팀: 사진이 많으면 괜찮음)
         var c = CaptureCoach(checksWalking: true)
-        run(&c, seconds: 12) { t in (Float(t * 0.05), 0, t * 12) }
+        run(&c, seconds: 12, exposure: 1.0 / 240) { t in (Float(t * 0.05), 0, t * 12) }   // 밝은 방(셔터 1/240초): 흔들림이 1.3 px 까지라 '너무 빨라요' 는 안 뜬다
         XCTAssertNil(c.alert)
         XCTAssertTrue(c.turnHeavy)
 
@@ -142,10 +142,26 @@ final class CaptureCoachTests: XCTestCase {
         XCTAssertGreaterThan(fast.frameBlurPx, fast.config.skipBlurPx, "이만큼 흔들린 프레임은 저장하지 않는다")
 
         var dark = CaptureCoach(checksWalking: false)
-        run(&dark, seconds: 1, exposure: 1.0 / 60) { t in (0, 0, t * 20) }   // 셔터가 최대(1/60초)인 어두운 방: 초당 20° → 약 8 px
+        run(&dark, seconds: 1, exposure: 1.0 / 60) { t in (0, 0, t * 20) }   // 셔터 상한이 안 걸려 1/60초까지 길어진 어두운 방: 초당 20° → 약 8 px
         XCTAssertEqual(dark.alert, .tooDark)
     }
 
+    func testBlurLimitsAtTheShutterCap() {
+        // 셔터 상한(1/120초)에서 초당 10° 로 돌면 약 2 px → 저장한다. 초당 18° 면 약 3.5 px → 저장하지 않고 '너무 빨라요'
+        var ok = CaptureCoach(checksWalking: false)
+        run(&ok, seconds: 1, exposure: 1.0 / 120) { t in (0, 0, t * 10) }
+        XCTAssertLessThan(ok.frameBlurPx, ok.config.skipBlurPx)
+        XCTAssertNil(ok.alert)
+
+        var over = CaptureCoach(checksWalking: false)
+        run(&over, seconds: 1, exposure: 1.0 / 120) { t in (0, 0, t * 18) }
+        XCTAssertGreaterThan(over.frameBlurPx, over.config.skipBlurPx)
+        XCTAssertEqual(over.alert, .tooFast, "상한이 걸려 있으면 불을 켜도 소용없으니 '어두워서' 가 아니라 '너무 빨라요'")
+
+        XCTAssertEqual(CaptureCoach.Config().skipBlurPx, 3)
+        XCTAssertEqual(CaptureCoach.Config().warnBlurPx, 2.5)
+        XCTAssertEqual(FurnitureShotConfig().maxBlurPx, CaptureCoach.Config().skipBlurPx, "가구 전체 사진도 같은 한도")
+    }
     func testOrbitingFurnitureWhileLookingAtItIsNotShaky() {
         // 가구(원점) 주위를 반지름 1.5 m 로 30초에 한 바퀴 돌며 계속 가구를 바라봄 → 회전과 옆 이동이 상쇄돼 가운데는 거의 안 번진다
         var c = CaptureCoach(checksWalking: false)
@@ -919,7 +935,7 @@ final class FurnitureShotTests: XCTestCase {
     }
 
     func testWideShotPlanGroupsSameShapeAndOnlyTakesNotWhole() {
-        let rule = FurnitureShotsFile.Rule(minFill: 0.3, maxBlurPx: 6, marginFrac: 0.02, minSeen: 0.05,
+        let rule = FurnitureShotsFile.Rule(minFill: 0.3, maxBlurPx: 3, marginFrac: 0.02, minSeen: 0.05,
                                            twinTolM: 0.06, yawGapDeg: 30)
         let report = FurnitureShotsFile(rule: rule, frameCount: 10, objects: [
             .init(objectId: "c1", category: "chair", label: "의자 1", status: "missing", problem: "notWhole"),
@@ -1053,7 +1069,7 @@ final class FurnitureShotTests: XCTestCase {
             t.addSaved(view([chair], eye: ringEye(deg, around: chair), look: chair.center, frameId: i))
         }
         // 뒤쪽(200°)에서 조금 흔들린 사진 (점수는 낮다)
-        t.addSaved(view([chair], eye: ringEye(200, around: chair), look: chair.center, frameId: 5, blur: 5))
+        t.addSaved(view([chair], eye: ringEye(200, around: chair), look: chair.center, frameId: 5, blur: 2.5))
         XCTAssertEqual(t.chips().first?.views, 2, "점수가 낮아도 새 방향은 남는다")
         let shots = try XCTUnwrap(t.report(finalBoxes: nil).objects.first?.shots)
         XCTAssertTrue(shots.map(\.frameId).contains(5), "리포트에도 들어간다")
@@ -1124,12 +1140,16 @@ final class CameraRigTests: XCTestCase {
                                createdAt: "2026-10-25T00:00:00Z")
         let none = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(meta)) as? [String: Any])
         XCTAssertNil(none["sampling"], "규칙을 안 넣으면 키가 없다 (예전 촬영본과 같음)")
-        meta.sampling = .init(pollHz: 10, minIntervalS: 0.18, minMoveM: 0.02, minTurnDeg: 2, maxBlurPx: 6, jpegQuality: 0.85)
+        meta.sampling = .init(pollHz: 10, minIntervalS: 0.18, minMoveM: 0.02, minTurnDeg: 2, maxBlurPx: 3, jpegQuality: 0.85)
+        let noCap = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(meta)) as? [String: Any])
+        XCTAssertNil((noCap["sampling"] as? [String: Any])?["maxExposureS"], "셔터 상한을 안 걸었으면 키가 없다 (2026-11-18 이전 촬영본과 같음)")
+        meta.sampling?.maxExposureS = 0.008333
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(meta)) as? [String: Any])
         let s = try XCTUnwrap(obj["sampling"] as? [String: Any])
         XCTAssertEqual(s["minIntervalS"] as? Double, 0.18)
         XCTAssertEqual(s["minMoveM"] as? Double, 0.02)
-        XCTAssertEqual(s["maxBlurPx"] as? Double, 6)
+        XCTAssertEqual(s["maxBlurPx"] as? Double, 3)
+        XCTAssertEqual(s["maxExposureS"] as? Double ?? 0, 1.0 / 120, accuracy: 1e-6)
     }
 
     func testMetaJsonCarriesCamerasAndKeepsOldFields() throws {
@@ -1196,6 +1216,7 @@ final class CaptureLogTests: XCTestCase {
         log.thermal = [.init(ts: 1, state: "serious")]
         log.focus = .init(lockEnabled: true, lockedAtTs: 2, lensPosition: 0.7, relocks: 1, note: nil)
         log.depthSources = ["sceneDepth": 10]
+        log.exposure = .init(capEnabled: true, capS: 0.008333, defaultMaxS: 0.016667, appliedAtTs: 1.2, reapplied: 1, longestS: 0.008333, note: nil)
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(log)) as? [String: Any])
         XCTAssertNotNil(obj["stabilization"])
         XCTAssertEqual((obj["skippedPolls"] as? [String: Any])?["blurry"] as? Int, 3)
@@ -1203,6 +1224,10 @@ final class CaptureLogTests: XCTestCase {
         XCTAssertNil(event["endTs"], "회복 못 한 구간은 endTs 가 없다")
         XCTAssertEqual((obj["focus"] as? [String: Any])?["relocks"] as? Int, 1)
         XCTAssertEqual((obj["depthSources"] as? [String: Any])?["sceneDepth"] as? Int, 10)
+        let exposure = try XCTUnwrap(obj["exposure"] as? [String: Any])
+        XCTAssertEqual(exposure["capEnabled"] as? Bool, true)
+        XCTAssertEqual(exposure["reapplied"] as? Int, 1)
+        XCTAssertEqual(exposure["longestS"] as? Double ?? 0, 0.008333, accuracy: 1e-9)
     }
 
     func testPreScanChecklistIsShort() {
@@ -1318,6 +1343,26 @@ final class TorchTests: XCTestCase {
         XCTAssertFalse(m.update(time: 4.5, ambientLumens: nil, exposureS: 1.0 / 60, iso: 400), "ISO 가 낮으면 어둡지 않다")
     }
 
+    func testDarknessAtTheShutterCap() {
+        // 셔터 상한 1/120초: 셔터가 상한에 붙어 있고 ISO 가 2000(1/60초로 치면 1000) 이상이면 어둡다
+        var m = DarknessMeter()
+        m.maxExposureS = 1.0 / 120
+        XCTAssertFalse(m.update(time: 0, ambientLumens: nil, exposureS: 1.0 / 120, iso: 2100))
+        XCTAssertTrue(m.update(time: 2.0, ambientLumens: nil, exposureS: 1.0 / 120, iso: 2100))
+        XCTAssertFalse(m.update(time: 2.1, ambientLumens: nil, exposureS: 1.0 / 120, iso: 1250), "ISO 1250 은 1/120초에서는 아직 어둡지 않다")
+        XCTAssertFalse(m.update(time: 2.2, ambientLumens: nil, exposureS: 1.0 / 250, iso: 2100), "셔터에 여유가 있으면 어둡지 않다")
+
+        var slow = DarknessMeter()                                     // 상한이 안 걸려 1/60초까지 길어졌어도 같은 밝기에서 켠다
+        slow.maxExposureS = 1.0 / 120
+        XCTAssertFalse(slow.update(time: 0, ambientLumens: nil, exposureS: 1.0 / 60, iso: 1100))
+        XCTAssertTrue(slow.update(time: 2, ambientLumens: nil, exposureS: 1.0 / 60, iso: 1100))
+
+        var capped = DarknessMeter()                                   // ISO 가 카메라 한계에 거의 닿았으면 환산값과 상관없이 어둡다
+        capped.maxExposureS = 1.0 / 120
+        capped.maxISO = 1600
+        XCTAssertFalse(capped.update(time: 0, ambientLumens: nil, exposureS: 1.0 / 120, iso: 1500))
+        XCTAssertTrue(capped.update(time: 2, ambientLumens: nil, exposureS: 1.0 / 120, iso: 1500))
+    }
     func testDarknessUsesTheLightEstimateWithoutISO() {
         var dark = DarknessMeter()
         XCTAssertFalse(dark.update(time: 0, ambientLumens: 150, exposureS: nil, iso: nil))

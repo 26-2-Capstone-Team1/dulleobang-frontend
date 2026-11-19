@@ -10,7 +10,7 @@ import simd
 // ARKit 에 의존하지 않아 테스트할 수 있다. CaptureRecorder 가 10 Hz 폴링마다 메인 스레드에서 부른다.
 //  1. 화면 안: 상자 꼭짓점 8개가 모두 화면 안 (가장자리 2% 여유)
 //  2. 충분히 크게: 화면 가로나 세로의 30% 이상
-//  3. 선명: 저장 순간 예상 흔들림 6 px 이하
+//  3. 선명: 저장 순간 예상 흔들림 3 px 이하
 //  가림 재기(점수 · 기록용): 카메라 쪽을 향한 옆면 · 윗면에 면마다 5 × 5 점을 찍어 LiDAR 깊이와 비교한다. 상자 면보다 확실히
 //  (10 cm + 거리의 3%) 앞에 무언가 있으면 그 점은 가려진 것 — 단 앞을 가린 것이 가구 자신 · 위에 놓인 물건(컵 · 책 · TV) ·
 //  바닥 · 이 가구에 붙은 더 작은 가구(식탁에 넣은 의자)면 치지 않는다. 안 가려진 비율(visible)이 높을수록 점수가 높고,
@@ -105,7 +105,7 @@ struct FurnitureShotConfig {
     var marginFrac: Float = 0.02          // 꼭짓점이 화면 가장자리에서 이만큼(비율) 안쪽
     var minFill = 0.30                    // 화면 가로나 세로의 이만큼 이상 차지
     var minSeen = 0.05                    // 카메라 쪽 면의 이 비율도 안 보이면 못 본 것 (벽 너머 등). 이 선까지는 가려져도 통과
-    var maxBlurPx = 6.0                   // 저장 순간 예상 흔들림 (px)
+    var maxBlurPx = 3.0                   // 저장 순간 예상 흔들림 (px). CaptureCoach.Config.skipBlurPx 와 같게 (CaptureRecorder 가 맞춰 넣는다)
     var minDepthSamples = 12              // 이보다 적게 재지면 가려짐을 모른다고 본다 (먼 가구 · 깊이 없음)
     var blockerShare = 0.10               // 가린 점이 전체의 이 비율 이상인 가구만 blockerId 로 기록
     var faceGrid = 5                      // 면마다 5 × 5 점
@@ -390,7 +390,7 @@ enum FurnitureShotMath {
         let v = out.visible ?? 0.8
         let size = min(1, out.fill / 0.55)
         let angle = (sideFacing >= 2 ? 1.0 : 0.75) * (topFacing ? 1.0 : 0.85)
-        out.score = v * v * size * angle * max(0.5, 1 - view.blurPx / 16)
+        out.score = v * v * size * angle * max(0.5, 1 - view.blurPx / 8)
         return out
     }
 
