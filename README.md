@@ -66,8 +66,8 @@ XcodeGen 을 안 쓰면: 새 iOS App 프로젝트(SwiftUI) 를 만들고 `Dulleo
 
 **기본으로 켜져 있습니다.** 앱이 서버 대신 `Core/Mock/MockBackend` 에 요청을 보내고, 백엔드와 같은 경로·JSON 을 돌려줍니다.
 화면·디코딩 코드는 실제 서버와 똑같이 동작하므로, 백엔드가 준비되면 **설정 › 데모 모드 › 데모 데이터 사용** 을 끄기만 하면 됩니다.
-데모 모드를 끄면 기본으로 팀 GCP 서버 `http://34.47.87.3:8080/api` 에 연결합니다 (`AppConfig.defaultBaseURL` 한 곳, 설정 › 백엔드 서버에서 바꾸거나 **기본 서버로** 로 되돌림).
-아직 HTTP 만 있어서 ATS 예외(`NSAllowsArbitraryLoads`)를 켜 두었고, HTTPS 도메인이 생기면 이 값만 `https://` 로 바꾸고 예외를 지우면 됩니다.
+데모 모드를 끄면 기본으로 팀 GCP 서버 `https://34.47.87.3/api` 에 연결합니다 (`AppConfig.defaultBaseURL` 한 곳, 설정 › 백엔드 서버에서 바꾸거나 **기본 서버로** 로 되돌림).
+2026-11-19 HTTPS 로 바꿨습니다(예전 `http://34.47.87.3:8080/api` 도 백엔드가 닫을 때까지 같은 서버). 주소를 직접 넣을 때 `http://34.47.87.3/api` 처럼 http 로 넣으면 로그인만 되고 나머지가 401 이 나니 https 로 넣으세요. ATS 예외(`NSAllowsArbitraryLoads`)는 같은 Wi-Fi 의 http 개발 서버 때문에 아직 둡니다.
 서버 VM 이 꺼져 있거나 백엔드 앱이 아직 안 올라가 있으면 "서버에 연결할 수 없습니다" 가 나오니, 그동안은 데모 모드를 켜 두세요.
 홈 로고 옆의 초록 **데모** 표시를 누르면 바로 설정으로 갑니다.
 
@@ -445,19 +445,23 @@ s = 256 / pose["width"]; fx, fy, cx, cy = (pose["K"][k] * s for k in ("fx", "fy"
 
 URI 는 앱이 직접 받을 수 있는 **http(s) URL**(pre-signed 가능) 또는 서버 기준 상대 경로(`/files/…`)여야 합니다. `s3://` 는 앱이 못 받습니다.
 
-### 4-1. 소셜 로그인 설정 (카카오 · 구글)
+### 4-1. 소셜 로그인 (카카오 · 구글)
 
-앱은 SDK 가 준 토큰을 `POST /auth/oauth/{kakao|google}` 로 서버에 넘기고, 서버가 검증한 뒤 우리 토큰(TokenPair)을 줍니다.
-SDK 연결 자리는 `App/Session.swift` 의 `SocialLogin.token(for:)` 하나입니다. 앱 키가 없으면 "앱 키를 설정한 뒤 쓸 수 있어요" 를 보여 주고,
-데모 모드에서는 SDK 대신 이름 · 이메일 가입 시트로 동작합니다.
+앱은 SDK 가 준 토큰을 `POST /auth/oauth/{kakao|google}` 로 서버에 넘기고(카카오 `{"accessToken"}`, 구글 `{"idToken"}`), 서버가 검증한 뒤 우리 토큰(TokenPair)을 줍니다.
+SDK 연결은 `App/Session.swift` 의 `SocialLogin` 한 곳입니다(2026-11-19 연결). 데모 모드에서는 SDK 대신 이름 · 이메일 가입 시트로 동작합니다.
 
 | | 카카오 | 구글 |
 |---|---|---|
-| 키 발급 | Kakao Developers › 내 애플리케이션 › 네이티브 앱 키, 플랫폼에 iOS 번들 ID 등록, 카카오 로그인 활성화 | Google Cloud 콘솔 › OAuth 클라이언트 ID(iOS), 번들 ID 등록 |
-| 패키지 (SPM) | `https://github.com/kakao/kakao-ios-sdk` (KakaoSDKAuth, KakaoSDKUser) | `https://github.com/google/GoogleSignIn-iOS` |
-| Info.plist | URL Scheme `kakao{네이티브 앱 키}`, `LSApplicationQueriesSchemes`: `kakaokompassauth`, `kakaolink` | URL Scheme = 역순 클라이언트 ID, `GIDClientID` |
-| 토큰 | `UserApi.shared.loginWithKakaoTalk` (없으면 `loginWithKakaoAccount`) → `oauthToken.accessToken` | `GIDSignIn.sharedInstance.signIn(withPresenting:)` → `user.idToken?.tokenString` |
-| 서버 검증 | `GET https://kapi.kakao.com/v2/user/me` (Authorization: Bearer 토큰) 로 회원번호 확인 | 구글 공개키로 ID 토큰 서명 · `aud`(클라이언트 ID) · `exp` 검증, `sub` 사용 |
+| 패키지 (SPM, `project.yml` 의 `packages`) | `https://github.com/kakao/kakao-ios-sdk` 2.30.0~ (KakaoSDKCommon · Auth · User) | `https://github.com/google/GoogleSignIn-iOS` 10.1.0~ |
+| 키 (`project.yml` › `info.properties` → Info.plist) | `KakaoNativeAppKey`, URL Scheme `kakao{네이티브 앱 키}`, `LSApplicationQueriesSchemes`: `kakaokompassauth`, `kakaolink` | `GIDClientID`(iOS 클라이언트), `GIDServerClientID`(웹 클라이언트 → ID 토큰의 `aud`), URL Scheme = 역순 iOS 클라이언트 ID |
+| 토큰 | 카카오톡이 있으면 `loginWithKakaoTalk`, 없으면 `loginWithKakaoAccount` → `oauthToken.accessToken` | `GIDSignIn.sharedInstance.signIn(withPresenting:)` → `user.idToken.tokenString` |
+| 앱으로 돌아오기 | `DulleobangApp` 의 `onOpenURL` → `AuthController.handleOpenUrl` | 같은 곳 → `GIDSignIn.handle` |
+| 서버 검증 | `GET https://kapi.kakao.com/v2/user/me` (Authorization: Bearer 토큰) 로 회원번호 확인 | 구글 공개키로 ID 토큰 서명 · `aud`(웹 클라이언트 ID) · `exp` 검증, `sub` 사용 |
+
+- 클라이언트 ID 와 네이티브 앱 키는 앱에 들어가는 공개 식별자라 `project.yml` 에 둡니다(비밀 키 아님).
+- **서버가 https 가 아니면 소셜 로그인을 막습니다**(`SocialLogin.isSecure`). 구글 ID 토큰 · 카카오 액세스 토큰이 암호화 없이 오가지 않게 하려는 것으로, 같은 Wi-Fi 의 개발 서버(사설 IP · `.local` · localhost)는 허용합니다. 백엔드가 HTTPS 전환 뒤 실기기 확인을 요청했습니다(11.19).
+- 사용자가 로그인 창을 닫으면 오류 안내 없이 그대로 두고, 로그아웃하면 SDK 쪽 로그인도 끊습니다(다음에 다른 계정을 고를 수 있게).
+- XcodeGen 으로 프로젝트를 다시 만들면 패키지 · 키가 그대로 들어갑니다(`xcodegen generate`). 처음 빌드 때 Xcode 가 패키지를 받아 옵니다.
 
 ## 5. 3D 뷰어 구조
 

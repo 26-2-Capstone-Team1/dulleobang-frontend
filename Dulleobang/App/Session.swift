@@ -1,6 +1,14 @@
 import Combine
 import CoreLocation
 import SwiftUI
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
+#if canImport(KakaoSDKUser)
+import KakaoSDKAuth
+import KakaoSDKCommon
+import KakaoSDKUser
+#endif
 
 enum LoginProvider: String, Identifiable {
     case kakao, google
@@ -8,8 +16,9 @@ enum LoginProvider: String, Identifiable {
     var title: String { self == .kakao ? "카카오" : "Google" }
 }
 
-/// 카카오 · 구글 SDK 로그인 → 서버에 넘길 토큰 (카카오 accessToken, 구글 idToken).
-/// 앱 키를 받아 SDK 를 연결하면 여기만 채우면 된다 (README "소셜 로그인 설정"). 데모 모드는 SDK 없이 가입 시트로 대신한다.
+/// 카카오 · 구글 SDK 로그인 → 서버에 넘길 토큰 (카카오 accessToken, 구글 idToken) → AuthAPI.oauth.
+/// 키는 Info.plist (project.yml 의 info): GIDClientID, GIDServerClientID(구글 웹 클라이언트 → ID 토큰의 aud), KakaoNativeAppKey.
+/// 데모 모드는 SDK 없이 가입 시트로 대신한다 (LoginView.startSocial). 패키지가 없는 빌드에서는 '앱 키를 설정한 뒤' 안내로 막힌다.
 enum SocialLogin {
     struct NotConfigured: LocalizedError {
         let provider: LoginProvider
@@ -18,11 +27,138 @@ enum SocialLogin {
         }
     }
 
+    /// 서버가 http 면 SDK 토큰(구글 ID 토큰 · 카카오 액세스 토큰)이 암호화 없이 오간다.
+    /// 백엔드 요청(11.19)대로 HTTPS 전환 뒤에만 보낸다. 같은 Wi-Fi 의 개발 서버(사설 IP · .local · localhost)는 막지 않는다
+    struct NeedsHTTPS: LocalizedError {
+        let provider: LoginProvider
+        var errorDescription: String? {
+            "\(provider.title) 로그인은 서버가 HTTPS로 바뀐 뒤 쓸 수 있어요. 지금은 이메일로 로그인해 주세요."
+        }
+    }
+
+    struct Failed: LocalizedError {
+        let errorDescription: String?
+    }
+
+    private static func info(_ key: String) -> String? {
+        (Bundle.main.object(forInfoDictionaryKey: key) as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// 앱을 켤 때 한 번 (카카오 SDK 초기화)
+    static func configure() {
+        #if canImport(KakaoSDKUser)
+        if let key = info("KakaoNativeAppKey") { KakaoSDK.initSDK(appKey: key) }
+        #endif
+    }
+
+    /// 카카오톡 · 구글 로그인을 마치고 앱으로 돌아온 URL (DulleobangApp 의 onOpenURL)
+    @MainActor
+    static func handle(_ url: URL) {
+        #if canImport(KakaoSDKUser)
+        if info("KakaoNativeAppKey") != nil, AuthApi.isKakaoTalkLoginUrl(url) {
+            _ = AuthController.handleOpenUrl(url: url)
+            return
+        }
+        #endif
+        #if canImport(GoogleSignIn)
+        _ = GIDSignIn.sharedInstance.handle(url)
+        #endif
+    }
+
     @MainActor
     static func token(for provider: LoginProvider) async throws -> String {
-        // KakaoSDK:      UserApi.shared.loginWithKakaoTalk / loginWithKakaoAccount → oauthToken.accessToken
-        // GoogleSignIn:  GIDSignIn.sharedInstance.signIn(withPresenting:) → result.user.idToken?.tokenString
-        throw NotConfigured(provider: provider)
+        guard isSecure(AppConfig.shared.baseURL) else { throw NeedsHTTPS(provider: provider) }
+        switch provider {
+        case .google: return try await googleIdToken()
+        case .kakao: return try await kakaoAccessToken()
+        }
+    }
+
+    /// https 이거나, 같은 Wi-Fi 의 개발 서버
+    static func isSecure(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == "https" { return true }
+        guard let host = url.host?.lowercased() else { return false }
+        if host == "localhost" || host == "127.0.0.1" || host.hasSuffix(".local") { return true }
+        let p = host.split(separator: ".").compactMap { Int($0) }
+        guard p.count == 4 else { return false }
+        return p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16...31).contains(p[1]))
+    }
+
+    /// 로그아웃할 때 SDK 쪽 로그인도 끊는다 (다음에 다른 계정을 고를 수 있게)
+    @MainActor
+    static func signOut() {
+        #if canImport(GoogleSignIn)
+        GIDSignIn.sharedInstance.signOut()
+        #endif
+        #if canImport(KakaoSDKUser)
+        if info("KakaoNativeAppKey") != nil, AuthApi.hasToken() {
+            UserApi.shared.logout { _ in }
+        }
+        #endif
+    }
+
+    // MARK: 구글: GIDSignIn → ID 토큰 (aud = GIDServerClientID)
+
+    @MainActor
+    private static func googleIdToken() async throws -> String {
+        #if canImport(GoogleSignIn)
+        guard let clientID = info("GIDClientID") else { throw NotConfigured(provider: .google) }
+        guard let presenter = topViewController() else {
+            throw Failed(errorDescription: "구글 로그인 화면을 열지 못했어요. 다시 시도해 주세요.")
+        }
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID, serverClientID: info("GIDServerClientID"))
+        do {
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenter)
+            guard let token = result.user.idToken?.tokenString else {
+                throw Failed(errorDescription: "구글에서 로그인 토큰을 받지 못했어요. 다시 시도해 주세요.")
+            }
+            return token
+        } catch let e as GIDSignInError where e.code == .canceled {
+            throw CancellationError()                    // 사용자가 닫음 → 오류 안내 없이 그대로
+        }
+        #else
+        throw NotConfigured(provider: .google)
+        #endif
+    }
+
+    // MARK: 카카오: 카카오톡이 있으면 카카오톡, 없으면 카카오계정 웹 로그인 → 액세스 토큰
+
+    @MainActor
+    private static func kakaoAccessToken() async throws -> String {
+        #if canImport(KakaoSDKUser)
+        guard info("KakaoNativeAppKey") != nil else { throw NotConfigured(provider: .kakao) }
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
+            let done: (OAuthToken?, Error?) -> Void = { token, error in
+                if let token {
+                    cont.resume(returning: token.accessToken)
+                } else if let e = error as? SdkError, case .ClientFailed(reason: .Cancelled, errorMessage: _) = e {
+                    cont.resume(throwing: CancellationError())   // 사용자가 닫음
+                } else {
+                    cont.resume(throwing: error ?? Failed(errorDescription: "카카오 로그인에 실패했어요. 다시 시도해 주세요."))
+                }
+            }
+            // 카카오톡이 깔려 있는지 (Info.plist LSApplicationQueriesSchemes 의 kakaokompassauth).
+            // SDK 의 UserApi.isKakaoTalkLoginAvailable() 은 2.30 에서 deprecated 라 같은 확인을 직접 한다
+            let talkInstalled = URL(string: "kakaokompassauth://authorize").map { UIApplication.shared.canOpenURL($0) } ?? false
+            if talkInstalled {
+                UserApi.shared.loginWithKakaoTalk(completion: done)
+            } else {
+                UserApi.shared.loginWithKakaoAccount(prompts: nil, loginHint: nil, nonce: nil, completion: done)
+            }
+        }
+        #else
+        throw NotConfigured(provider: .kakao)
+        #endif
+    }
+
+    /// 지금 맨 위에 떠 있는 화면 (로그인 화면이 시트여도 그 위에서 띄우게)
+    @MainActor
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.first?.windows.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        return top
     }
 }
 
@@ -133,6 +269,7 @@ final class Session: ObservableObject {
     }
 
     func logout() async {
+        SocialLogin.signOut()                                       // 구글 · 카카오 SDK 로그인도 끊는다
         // 기기 정보부터 지우고, 서버에 알리는 건 기다리지 않는다 (네트워크가 느려도 바로 로그아웃).
         // 명세의 로그아웃은 본문의 refreshToken 으로 세션을 찾으므로 Authorization 이 없어도 된다
         let refreshToken = AppConfig.shared.refreshToken

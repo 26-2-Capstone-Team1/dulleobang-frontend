@@ -5,10 +5,10 @@ import Security
 final class AppConfig {
     static let shared = AppConfig()
 
-    /// 기본 백엔드 = 팀 GCP 서버(dulleobang-backend VM, 서울 · 포트 8080). 설정 화면에서 다른 주소를 넣으면 그쪽이 우선.
-    /// 아직 HTTP 만 있어서 Info.plist 에 ATS 예외(NSAllowsArbitraryLoads)가 켜져 있다.
-    /// HTTPS 도메인이 생기면 여기만 https://api.<도메인>/api 로 바꾸고 ATS 예외를 지운다.
-    static let defaultBaseURL = "http://34.47.87.3:8080/api"
+    /// 기본 백엔드 = 팀 GCP 서버(dulleobang-backend VM, 서울). 설정 화면에서 다른 주소를 넣으면 그쪽이 우선.
+    /// 2026-11-19 HTTPS(443) 전환 · 실기기에서 매물 목록 · 3D 확인. 예전 http://34.47.87.3:8080/api 는 백엔드가 닫을 때까지 같은 서버.
+    /// Info.plist 의 ATS 예외(NSAllowsArbitraryLoads)는 같은 Wi-Fi 의 http 개발 서버와, 서버가 http 로 주는 파일 주소가 남아 있을 수 있어 아직 둔다.
+    static let defaultBaseURL = "https://34.47.87.3/api"
 
     var baseURL: URL {
         let s = UserDefaults.standard.string(forKey: "baseURL")?.trimmingCharacters(in: .whitespaces) ?? ""

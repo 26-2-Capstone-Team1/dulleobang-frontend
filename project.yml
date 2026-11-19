@@ -13,6 +13,14 @@ settings:
     DEVELOPMENT_TEAM: "338ZGXYZ43"       # 서명 팀 ID (다른 팀원은 Xcode › Signing 에서 본인 팀으로 바꾸거나 여기를 수정)
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  # 소셜 로그인 SDK (Swift Package Manager). 최소 버전 = 2026-11-19 최신
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: 10.1.0
+  KakaoSDK:
+    url: https://github.com/kakao/kakao-ios-sdk
+    from: 2.30.0
 targets:
   Dulleobang:
     type: application
@@ -28,6 +36,15 @@ targets:
       - path: Dulleobang/Resources/Mock
         type: folder                     # 데모 데이터(mock_seed.json · 사진) → 번들 안에 Mock/ 로 복사
         buildPhase: resources
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: KakaoSDK
+        product: KakaoSDKCommon
+      - package: KakaoSDK
+        product: KakaoSDKAuth
+      - package: KakaoSDK
+        product: KakaoSDKUser
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kr.ac.cau.dulleobang.app
@@ -53,6 +70,16 @@ targets:
           # NSAllowsLocalNetworking 은 넣지 않는다: 이 키가 있으면 iOS 가 NSAllowsArbitraryLoads 를 무시해서 http 팀 서버에 못 붙는다
         UIFileSharingEnabled: true       # 파일 앱에서 captures/ 의 zip 을 꺼낼 수 있게
         LSSupportsOpeningDocumentsInPlace: true
+        # 소셜 로그인 (백엔드 공유 11.19). 클라이언트 ID · 네이티브 앱 키는 앱에 들어가는 공개 식별자다 (비밀 키 아님)
+        GIDClientID: 374940312385-1bnqte0lr6vjbamfio46l1e0n6krb1p7.apps.googleusercontent.com
+        GIDServerClientID: 374940312385-1gci36b0bov13nmcv69dt681iv9mdv9t.apps.googleusercontent.com   # 웹 클라이언트 → 구글 ID 토큰의 aud (서버가 검증)
+        KakaoNativeAppKey: ee6e39d72b2898c409cb7a02634b7712
+        CFBundleURLTypes:
+          - CFBundleURLName: google-signin
+            CFBundleURLSchemes: [com.googleusercontent.apps.374940312385-1bnqte0lr6vjbamfio46l1e0n6krb1p7]
+          - CFBundleURLName: kakao-login
+            CFBundleURLSchemes: [kakaoee6e39d72b2898c409cb7a02634b7712]
+        LSApplicationQueriesSchemes: [kakaokompassauth, kakaolink]   # 카카오톡으로 로그인 · 카카오톡 설치 확인
   DulleobangTests:
     type: bundle.unit-test
     platform: iOS
