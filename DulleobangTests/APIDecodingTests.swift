@@ -19,6 +19,75 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertTrue(l.isSpaceReady)
     }
 
+    /// AI 메시 파이프라인 결과: 방 메시(meshUri) + 가구별 GLB(objects[].modelUri)
+    func testSpaceWithRoomMeshAndFurnitureModels() throws {
+        let s = try decode(SpaceResponse.self, #"""
+        {"meshUri": "/files/s1/room.glb",
+         "roomGeometry": {"floorHeight": -1.4, "ceilingHeight": 2.4, "walls": [],
+                          "boundingBox": {"min": {"x": -2, "y": -1.4, "z": -3}, "max": {"x": 2, "y": 1.0, "z": 1}}},
+         "objects": [{"objectId": "chair_2", "category": "chair", "position": {"x": 0.2, "y": -1.0, "z": -1.1},
+                      "rotation": {"yaw": 90}, "dimensions": {"width": 0.45, "height": 0.77, "depth": 0.57},
+                      "ownershipType": "PERSONAL", "modelUri": "/files/s1/chair_2.glb"},
+                     {"objectId": "sink_1", "category": "sink", "position": {"x": 1, "y": -0.9, "z": 0.5},
+                      "rotation": {"yaw": 0}, "dimensions": {"width": 1.2, "height": 0.9, "depth": 0.6}}]}
+        """#)
+        XCTAssertEqual(s.meshUri, "/files/s1/room.glb")
+        XCTAssertNil(s.threeDgsUri)
+        XCTAssertEqual(s.objects.first?.modelUri, "/files/s1/chair_2.glb")
+        XCTAssertNil(s.objects.last?.modelUri)                      // 방 메시에 붙어 있는 가구는 모델 없이 온다
+        XCTAssertTrue(Room(space: s).hasGeometry)
+
+        // 예전 응답(3DGS)도 그대로 읽는다. 방 구조가 없으면 뷰어가 메시 크기에서 범위를 잡는다
+        let old = try decode(SpaceResponse.self, #"""{"3dgsUri": "/files/scene_current.ply", "objects": []}"""#)
+        XCTAssertNil(old.meshUri)
+        XCTAssertEqual(old.threeDgsUri, "/files/scene_current.ply")
+        XCTAssertFalse(Room(space: old).hasGeometry)
+
+        XCTAssertTrue(SceneAsset.isMesh("https://cdn.example/s1/room.glb?X-Amz-Signature=abc"))
+        XCTAssertTrue(SceneAsset.isMesh("/files/room.OBJ"))
+        XCTAssertFalse(SceneAsset.isMesh("/files/scene_current.ply"))   // PLY 는 뷰어가 머리말로 정한다
+        XCTAssertFalse(SceneAsset.isMesh("/files/scene.ksplat"))
+    }
+
+    /// 실서버 백엔드 응답 (2026.11.18 문서 · 11.19 답변): 공간 = 색 점구름 pointsUri + roomGeometry, 3dgsUri 는 null.
+    /// 원본 room.glb · 가구별 GLB 는 meshUri · objects[].modelUri 로 붙을 예정. 입주 예상 = 가구를 뺀 새 PLY 의 pointsUri + remainingObjects
+    func testBackendPointCloudSpaceAndRoomState() throws {
+        let s = try decode(SpaceResponse.self, #"""
+        {"3dgsUri": null, "pointsUri": "/files/s1/points.ply", "meshUri": "/files/s1/room.glb",
+         "roomGeometry": {"floorHeight": -1.3, "ceilingHeight": 2.4,
+                          "walls": [{"id": "w1", "from": [-2, -3], "to": [2, -3], "height": 2.4}]},
+         "objects": [{"objectId": 3, "category": "bed", "position": {"x": 1, "y": -0.85, "z": -2},
+                      "rotation": {"yaw": 0}, "dimensions": {"width": 1.1, "height": 0.9, "depth": 2.0},
+                      "ownershipType": "PERSONAL", "modelUri": "/files/s1/objects/3.glb"},
+                     {"objectId": 4, "category": "storage", "position": {"x": -1, "y": -0.3, "z": -2.6},
+                      "rotation": {"yaw": 90}, "dimensions": {"width": 0.9, "height": 2.0, "depth": 0.6}}]}
+        """#)
+        XCTAssertNil(s.threeDgsUri)
+        XCTAssertEqual(s.pointsUri, "/files/s1/points.ply")
+        XCTAssertEqual(s.meshUri, "/files/s1/room.glb")
+        XCTAssertEqual(s.objects.map(\.objectId), ["3", "4"])
+        XCTAssertEqual(s.objects.first?.modelUri, "/files/s1/objects/3.glb")
+
+        let rs = try decode(RoomState.self, #"""
+        {"roomStateId": 12, "listingId": 7, "status": "READY", "pointsUri": "/files/rs12/points.ply",
+         "removedObjectIds": [3],
+         "remainingObjects": [{"objectId": 4, "category": "storage", "position": {"x": -1, "y": -0.3, "z": -2.6},
+                               "rotation": {"yaw": 90}, "dimensions": {"width": 0.9, "height": 2.0, "depth": 0.6}}]}
+        """#)
+        XCTAssertTrue(rs.isReady)
+        XCTAssertEqual(rs.pointsUri, "/files/rs12/points.ply")
+        XCTAssertEqual(rs.removedObjectIds, ["3"])
+        let movein = Room(space: s).applying(rs)
+        XCTAssertTrue(movein.isMoveIn)
+        XCTAssertEqual(movein.objects.map(\.objectId), ["4"])         // 남은 가구만 충돌 판정에 들어간다
+
+        // 뷰어가 방 메시를 못 읽으면 meshFailed 를 보낸다 (앱이 점구름으로 다시 연다)
+        guard case .meshFailed(let message)? = ViewerEvent(["type": "meshFailed", "message": "out of memory"]) else {
+            return XCTFail("meshFailed 를 읽지 못함")
+        }
+        XCTAssertEqual(message, "out of memory")
+    }
+
     func testStayViewFieldNamesDecode() throws {
         let l = try decode(Listing.self, #"""
         {"spaceId": 3, "address": "서울 동작구 상도동", "deposit": 1000, "monthlyRent": 54, "maintenanceFee": 6,

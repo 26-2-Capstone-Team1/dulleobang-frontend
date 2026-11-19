@@ -23,18 +23,23 @@ struct RoomPayload: Encodable {
     let floorY: Double, ceilingY: Double
     let bboxMin: Vec3, bboxMax: Vec3
     let walls: [Wall], doors: [Opening], windows: [Opening]
+    let hasGeometry: Bool                       // false 면 뷰어가 방 메시 크기에서 범위를 잡는다
     init(_ r: Room) {
         floorY = r.floorY; ceilingY = r.ceilingY; bboxMin = r.bboxMin; bboxMax = r.bboxMax
         walls = r.walls; doors = r.doors; windows = r.windows
+        hasGeometry = r.hasGeometry
     }
 }
 
 struct ScenePayload: Encodable {
+    let meshUrl: String?                        // 방 메시 (room.glb · 면이 있는 PLY · OBJ). 있으면 이것을 그린다
+    let objectModels: [String: String]          // objectId → 방과 따로 온 가구 GLB 주소 (‘가구 빼 보기’는 이 모델만 숨긴다)
     let splatUrl: String?
     let pointsUrl: String?
     let room: RoomPayload
     let objects: [SceneObject]
     let removed: [String]
+    let sceneRemoved: [String]                  // 장면 파일에서 이미 빠져 있는 가구 (서버가 가구를 빼고 만든 입주 예상 PLY) → 뷰어가 다시 가리지 않는다
     let glass: [GlassPane]                      // 서버가 찾은 투명 유리 → 뷰어가 반투명 유리 상자로 그린다
 }
 
@@ -73,6 +78,13 @@ final class SpaceViewerModel: ObservableObject {
     /// 열려다 실패한 입주 상태 (만들기 실패 · 삭제됨 · 내 것이 아님). 화면이 "입주 예상 보기" 대상을 다시 찾는 신호
     @Published private(set) var unavailableRoomStateId: String?
     private var loadGeneration = 0
+    /// 방 메시를 이 기기에서 못 열었다 (읽기 실패 · 뷰어가 죽음) → 이 화면에서는 점구름(3DGS)으로 연다
+    private var avoidMesh = false
+    /// 지금 장면이 방 메시인가 · 메시 대신 열 점구름(3DGS)이 있는가
+    private var sceneIsMesh = false
+    private var hasMeshFallback = false
+    /// 뷰어가 죽은 횟수 (점구름으로도 계속 죽으면 다시 열지 않고 알린다)
+    private var crashCount = 0
     /// 불러오는 중에 또 불려도 옮겨 갈 가구 배치를 잃지 않게 잠시 보관
     private var pendingCarry: [PlacedItem]?
 
@@ -116,21 +128,30 @@ final class SpaceViewerModel: ObservableObject {
             spaceVersion = space.spaceVersion
             objectsVersion = space.objectsVersion
             var room = Room(space: space)
-            var splat = space.threeDgsUri, points = space.pointsUri
+            var mesh = space.meshUri, splat = space.threeDgsUri, points = space.pointsUri
             var removed: [String] = []
+            var roomStateFiles: Set<String> = []     // 서버가 이 입주 상태를 위해 가구를 빼고 새로 만든 장면 · 점 파일
             if case .movein(let rsId) = stateKind {
                 let rs = await readyRoomState(rsId, currentSpaceVersion: space.spaceVersion)
                 if isStale() { return }
                 if let rs {
                     room = room.applying(rs)
                     removed = rs.removedObjectIds
-                    splat = rs.sceneUri ?? splat
-                    points = rs.pointsUri ?? points
+                    if let scene = rs.sceneUri {            // 서버가 가구를 뺀 장면을 따로 만들어 준 경우 (메시일 수도, 3DGS 일 수도)
+                        if SceneAsset.isMesh(scene) { mesh = scene } else { splat = scene; mesh = nil }
+                        roomStateFiles.insert(scene)
+                    }
+                    if let p = rs.pointsUri {               // 백엔드: 입주 예상 = 고른 가구를 빼고 새로 만든 PLY (11.19)
+                        points = p
+                        roomStateFiles.insert(p)
+                    }
                 } else {
                     stateKind = .current            // 못 만들었거나 볼 수 없는 입주 상태 → 현재 모습으로 연다
                     unavailableRoomStateId = rsId
                 }
             }
+            hasMeshFallback = splat != nil || points != nil
+            if avoidMesh && hasMeshFallback { mesh = nil }      // 이 기기에서 메시가 안 열렸다 → 점구름(가구도 점 안에 있다)으로
             self.room = room
             removedIds = removed
             objects = space.objects
@@ -138,8 +159,14 @@ final class SpaceViewerModel: ObservableObject {
             dimensionsText = Self.dimensionsText(space.roomDimensions, room)
 
             let prog: @Sendable (Double) -> Void = { [weak self] p in Task { @MainActor in self?.progress = p } }
-            var splatURL: String?, pointsURL: String?
-            if let s = splat {
+            var meshURL: String?, splatURL: String?, pointsURL: String?
+            sceneIsMesh = mesh != nil
+            // 실제로 여는 파일이 서버가 가구를 빼고 만든 것이면, 뺀 가구 자리를 뷰어가 다시 가리지 않게 알려 준다
+            let sceneRemoved = (mesh ?? splat ?? points).map { roomStateFiles.contains($0) } == true ? removed : []
+            if let m = mesh {
+                loading = "3D 데이터 내려받는 중"
+                meshURL = try await AssetCache.viewerURL(for: m, defaultExt: "glb", progress: prog)
+            } else if let s = splat {
                 loading = "3D 데이터 내려받는 중"
                 splatURL = try await AssetCache.viewerURL(for: s, defaultExt: "ply", progress: prog)
             } else if let p = points {
@@ -149,16 +176,30 @@ final class SpaceViewerModel: ObservableObject {
                 throw ViewerError("이 매물은 아직 3D 데이터가 없습니다")
             }
             if isStale() { return }
-            // 스캔 파일(PLY)이 없으면 뷰어가 벽 · 문 · 창 · 가구 정보로 단순한 3D 모형을 그린다
+            // 방 메시도 스캔 파일도 없으면 뷰어가 벽 · 문 · 창 · 가구 정보로 단순한 3D 모형을 그린다
             // (데모 데이터 · RoomPlan 구조만 있는 매물)
+
+            // 방과 따로 온 가구 GLB. 하나를 못 받아도 방은 연다 (그 가구만 안 보인다).
+            // 메시를 못 열어 점구름으로 여는 중이면 받지 않는다 (가구가 점 안에 들어 있고, 메모리를 아낀다)
+            var objectModels: [String: String] = [:]
+            let modeled = avoidMesh ? [SceneObject]() : space.objects.filter { $0.modelUri != nil }
+            for (i, o) in modeled.enumerated() {
+                guard let uri = o.modelUri else { continue }
+                loading = "가구 모델 내려받는 중 (\(i + 1)/\(modeled.count))"
+                progress = nil
+                if let url = try? await AssetCache.viewerURL(for: uri, defaultExt: "glb") { objectModels[o.objectId] = url }
+                if isStale() { return }
+            }
 
             loading = "3D 뷰어 준비 중"
             progress = nil
             let ready = await viewer.waitUntilReady()
             if isStale() { return }
             guard ready else { throw ViewerError("3D 뷰어를 시작하지 못했습니다 (인터넷 연결 확인)") }
-            viewer.call("loadScene", ScenePayload(splatUrl: splatURL, pointsUrl: pointsURL, room: RoomPayload(room),
-                                                  objects: space.objects, removed: removed, glass: room.glass))
+            viewer.call("loadScene", ScenePayload(meshUrl: meshURL, objectModels: objectModels,
+                                                  splatUrl: splatURL, pointsUrl: pointsURL, room: RoomPayload(room),
+                                                  objects: space.objects, removed: removed, sceneRemoved: sceneRemoved,
+                                                  glass: room.glass))
             viewer.call("setMode", mode.rawValue)
             viewer.call("setOverlay", overlay)
             pendingCarry = nil
@@ -204,8 +245,41 @@ final class SpaceViewerModel: ObservableObject {
         case .loaded: loading = nil; progress = nil
         case .progress(let v): progress = v
         case .error(let m): error = m; loading = nil
+        case .meshFailed(let m):
+            if !avoidMesh && hasMeshFallback {
+                avoidMesh = true
+                toast = "방 메시를 열지 못해 점구름으로 엽니다"
+                Task { await load(keepPlaced: !placed.isEmpty) }
+            } else {
+                error = "방 메시를 열지 못했습니다" + (m.isEmpty ? "" : ": \(m)")
+                loading = nil
+            }
+        case .crashed:
+            // 뷰어가 메모리 부족 등으로 죽었다가 다시 떴다 (화면은 비어 있음). 메시였으면 점구름으로, 아니면 같은 장면으로 한 번 더 연다
+            crashCount += 1
+            if sceneIsMesh && hasMeshFallback && !avoidMesh {
+                avoidMesh = true
+                toast = "방 메시가 이 기기에서 너무 커서 점구름으로 다시 엽니다"
+            } else if crashCount >= 2 {
+                error = "3D 뷰어가 계속 멈춥니다. 이 기기에서 열기에는 3D 파일이 너무 큰 것 같아요."
+                loading = nil
+                return
+            } else {
+                toast = "3D 뷰어가 멈춰서 다시 엽니다"
+            }
+            Task { await load(keepPlaced: !placed.isEmpty) }      // 놓아 둔 가구가 있으면 그대로, 없으면 저장된 배치를 다시 받는다
         case .select(let id): selectedId = id
         case .furnitureLoaded: pushStates()
+        case .bounds(let lo, let hi):
+            // 서버가 방 구조를 안 준 방: 뷰어가 방 메시 크기에서 잡은 범위로 바닥 · 천장 · 가구를 놓을 수 있는 범위를 정한다
+            guard var r = room, !r.hasGeometry else { return }
+            r.bboxMin = lo
+            r.bboxMax = hi
+            r.floorY = lo.y
+            r.ceilingY = hi.y
+            room = r
+            dimensionsText = Self.dimensionsText(nil, r)
+            recheckAll()
         case .transform(let id, let x, let z, let yaw, _):
             guard let i = placed.firstIndex(where: { $0.id == id }) else { return }
             placed[i].x = x

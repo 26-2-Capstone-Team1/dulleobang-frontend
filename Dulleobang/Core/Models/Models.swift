@@ -243,6 +243,9 @@ struct SceneObject: Codable, Identifiable {
     var dimensions: Dimensions
     var ownershipType: String?         // PERSONAL | RENTAL_OPTION | UNKNOWN (nil 도 미분류)
     var removable: Bool? = nil         // false = 구조물 · 고정 설비. 없으면 종류로 판단
+    /// 방 메시와 따로 온 이 가구의 GLB (AI 메시 파이프라인의 가구별 GLB). 미터 · Y-up, 원점 = 상자 중심.
+    /// 있으면 뷰어가 이 모델을 position · rotation.yaw 자리에 그리고, ‘가구 빼 보기’는 이 모델만 숨긴다
+    var modelUri: String? = nil
 
     var isPersonal: Bool { ownershipType == "PERSONAL" }
     var isRentalOption: Bool { ownershipType == "RENTAL_OPTION" }
@@ -279,10 +282,22 @@ struct SpaceResponse: Codable {
     var objectsVersion: Int? = nil     // 중개사가 가구 구분을 바꿀 때마다 +1 (입주 상태 요청에 그대로 보낸다)
     /// 서버가 LiDAR 로 찾은 투명 유리 (선택). 뷰어가 반투명 유리로 그리고, 가구 목록 · 가구 구분 · 충돌 판정에는 넣지 않는다
     var glass: [GlassPane] = []
+    /// 방 메시: room.glb (또는 면이 있는 PLY · OBJ). AI 팀 메시 파이프라인(export_space.py)의 결과, ARKit 좌표 그대로.
+    /// 있으면 3dgsUri · pointsUri 보다 먼저 쓴다. 가구는 objects[].modelUri 로 따로 온다
+    var meshUri: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case threeDgsUri = "3dgsUri", pointsUri, roomGeometry, roomDimensions, objects, collisionGeometryUri
-        case spaceVersion, objectsVersion, glass
+        case spaceVersion, objectsVersion, glass, meshUri
+    }
+}
+
+/// 장면 파일의 종류를 주소로 가늠한다
+enum SceneAsset {
+    /// 확장자가 .glb · .gltf · .obj 면 메시. PLY 는 메시 · 3DGS · 점이 모두 될 수 있어 뷰어가 파일 머리말을 보고 정한다
+    static func isMesh(_ uri: String) -> Bool {
+        let path = uri.split(whereSeparator: { $0 == "?" || $0 == "#" }).first.map(String.init) ?? uri
+        return ["glb", "gltf", "obj"].contains((path as NSString).pathExtension.lowercased())
     }
 }
 
@@ -292,6 +307,7 @@ extension SpaceResponse {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threeDgsUri = try c.decodeIfPresent(String.self, forKey: .threeDgsUri)
         pointsUri = try c.decodeIfPresent(String.self, forKey: .pointsUri)
+        meshUri = (try? LooseContainer(decoder))?.string("meshUri", "meshUrl", "roomMeshUri", "roomUri")
         roomGeometry = try c.decodeIfPresent(RoomGeometry.self, forKey: .roomGeometry)
         roomDimensions = try c.decodeIfPresent(RoomDimensions.self, forKey: .roomDimensions)
         let all = try c.decodeIfPresent([SceneObject].self, forKey: .objects) ?? []

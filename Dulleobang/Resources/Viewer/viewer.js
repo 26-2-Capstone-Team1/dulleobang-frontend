@@ -1,5 +1,6 @@
-// 둘러방 3D 뷰어 — three.js + @mkkellogg/gaussian-splats-3d
-// 좌표계: 미터, Y-up, 오른손 (ARKit 월드와 동일). yaw: +Y 축 기준 반시계(위에서 볼 때), 도(°).
+// 둘러방 3D 뷰어 — three.js (+ 3DGS 를 받을 때만 @mkkellogg/gaussian-splats-3d)
+// 방은 넷 중 하나로 그린다: ① 메시(room.glb · PLY · OBJ, AI 팀 export_space.py 결과) ② 3DGS ③ 점 ④ 벽 · 가구 치수로 만든 상자 모형.
+// 좌표계: 미터, Y-up, 오른손 (ARKit 월드와 동일, glTF 와도 같음). yaw: +Y 축 기준 반시계(위에서 볼 때), 도(°).
 // Swift → JS : window.DV.*        JS → Swift : webkit.messageHandlers.dulleobang.postMessage({ type, … })
 // 충돌 판정은 Swift(CollisionChecker)가 한다. JS 는 렌더링·입력만 담당하고 결과 색만 받아서 칠한다.
 import * as THREE from 'three';
@@ -44,14 +45,19 @@ const controls = new OrbitControls(camera, cvs);
 Object.assign(controls, { enableDamping: true, enabled: false, minPolarAngle: 0, maxPolarAngle: 80 * D2R, minDistance: 1, maxDistance: 30 });
 
 const world = new THREE.Group(), overlay = new THREE.Group(), furnGroup = new THREE.Group();
-scene.add(world, overlay, furnGroup);
+const scanGroup = new THREE.Group();   // 방 메시 + 방과 따로 온 가구 GLB (같은 방을 다시 열 때는 그대로 둔다)
+scene.add(world, scanGroup, overlay, furnGroup);
 
 let room = null;            // { floorY, ceilingY, bboxMin, bboxMax, walls, doors, windows }
 let mode = 'walk';          // walk (1인칭) | overview (평면뷰: 위에서 내려다봄, 기울이면 입체)
 let splat = null;
 let overlayOn = true;
 const objectViz = new Map(); // objectId → { lines, label }
-const objectMeshes = new Map(); // objectId → 블록아웃 모형 (스캔 파일이 없을 때)
+const objectMeshes = new Map(); // objectId → 화면에 그린 가구 (상자 모형 또는 가구 GLB). setRemovedObjects 가 숨기고 보인다
+const objectModels = new Map(); // objectId → { url, group } 방과 따로 온 가구 GLB (objects[].modelUrl)
+let scan = null;                // 지금 떠 있는 방 메시 { url, root }
+let sceneRemoved = new Set();   // 장면 파일에서 이미 빠져 있는 가구 (서버가 가구를 빼고 새로 만든 입주 예상 PLY · 장면)
+let loadGen = 0;                // loadScene 이 겹쳐 불렸을 때 늦게 끝난 쪽을 버리기 위한 번호
 const furn = new Map();      // furnitureId → { root, pad, lines, label, dims }
 let selected = null;
 
@@ -75,11 +81,22 @@ function label(text, cls = '') {
   el.textContent = text;
   return new CSS2DObject(el);
 }
+const TEX_SLOTS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap'];
+function disposeMaterial(m) {
+  if (!m) return;
+  for (const k of TEX_SLOTS) {
+    const t = m[k];
+    if (!t) continue;
+    try { t.source?.data?.close?.(); } catch (_) {}     // ImageBitmap 은 바로 닫아야 큰 텍스처 메모리가 풀린다
+    t.dispose?.();
+  }
+  m.dispose?.();
+}
 function disposeTree(o) {
   o.traverse((c) => {
     c.geometry?.dispose?.();
     const m = c.material;
-    if (Array.isArray(m)) m.forEach((x) => x.dispose()); else m?.dispose?.();
+    if (Array.isArray(m)) m.forEach(disposeMaterial); else disposeMaterial(m);
   });
 }
 function removeLabels(o) {
@@ -99,45 +116,510 @@ function roomCenter() {
 
 // ---------------------------------------------------------------- scene loading
 async function loadScene(p) {
+  const gen = ++loadGen;
+  const stale = () => gen !== loadGen;
   try {
-    clearAll();
+    const want = await sceneSource(p);                  // { kind: 'mesh' | 'splat' | 'points' | 'blockout', url }
+    if (stale()) return;
+    const keep = (want.kind === 'mesh' || want.kind === 'points') && !!scan && scan.url === want.url;   // 같은 방 메시 · 점구름은 다시 읽지 않는다 (지금 모습 ↔ 입주 예상)
+    clearAll(keep);
     room = p.room;
-    if (p.splatUrl) {
+    sceneRemoved = new Set(p.sceneRemoved || []);
+    const models = p.objectModels || {};                 // objectId → 방과 따로 온 가구 GLB 주소 (앱이 내려받아 둔 것)
+    const objects = (p.objects || []).map((o) => (o.modelUrl || !models[o.objectId] ? o : { ...o, modelUrl: models[o.objectId] }));
+    const removed = new Set(p.removed || []), glassList = p.glass || [];
+    const progress = (ev) => { if (ev?.total) post({ type: 'progress', value: ev.loaded / ev.total }); };
+    if (want.kind === 'splat') {
       const GS = await import('@mkkellogg/gaussian-splats-3d');
       // WKWebView 는 cross-origin isolation 이 아니므로 SharedArrayBuffer 를 쓰지 않는다
-      splat = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false });
-      await splat.addSplatScene(p.splatUrl, {
+      const viewer = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false });
+      await viewer.addSplatScene(want.url, {
         showLoadingUI: false, progressiveLoad: false, splatAlphaRemovalThreshold: 5,
         onProgress: (pct) => post({ type: 'progress', value: (Number(pct) || 0) / 100 }),
       });
+      if (stale()) { try { viewer.dispose?.(); } catch (_) {} return; }
+      splat = viewer;
       world.add(splat);
-    } else if (p.pointsUrl) {
-      const geo = await new PLYLoader().loadAsync(p.pointsUrl, (ev) => {
-        if (ev.total) post({ type: 'progress', value: ev.loaded / ev.total });
-      });
-      const mat = new THREE.PointsMaterial({ size: 0.012, sizeAttenuation: true, vertexColors: geo.hasAttribute('color') });
-      world.add(new THREE.Points(geo, mat));
+    } else if (want.kind === 'mesh' || want.kind === 'points') {
+      if (!keep) {
+        let root;
+        try {
+          root = await loadScan(want.url, progress);
+        } catch (e) {
+          // 방 메시를 못 읽음 (파일이 깨졌거나 너무 커서 메모리가 모자람) → 앱이 점구름(pointsUri)이 있으면 그것으로 다시 연다
+          if (want.kind === 'mesh') { if (!stale()) post({ type: 'meshFailed', message: String(e?.message || e) }); return; }
+          throw e;
+        }
+        if (stale()) { disposeTree(root); return; }
+        scanGroup.add(root);
+        scan = { url: want.url, root };
+      }
     } else {
       // 스캔 파일 없이 벽·문·창·가구 정보만 있을 때 (데모 데이터 · RoomPlan 구조만 올라온 매물)
-      buildBlockout(p.objects || [], new Set(p.removed || []), p.glass || []);
+      buildBlockout(objects, removed, glassList);
     }
-    buildGlass(p.glass || []);
-    buildOverlay(p.objects || [], new Set(p.removed || []), p.glass || []);
+    if (!(await loadObjectModels(objects, removed, p.objectFrame, stale))) return;
+    if (room.hasGeometry === false) adoptScanBounds();
+    prepareScanMask(objects);
+    applyScanMask(scanHiddenIds(removed));
+    updatePointSize();
+    buildGlass(glassList);
+    buildOverlay(objects, removed, glassList);
     setOverlay(overlayOn);
     setMode(mode);
     post({ type: 'loaded' });
   } catch (e) {
-    post({ type: 'error', message: '3D 장면 로딩 실패: ' + (e?.message || e) });
+    if (!stale()) post({ type: 'error', message: '3D 장면 로딩 실패: ' + (e?.message || e) });
   }
 }
 
-function clearAll() {
+function clearAll(keepScan = false) {
   for (const id of [...furn.keys()]) removeFurniture(id);
   clearGroup(overlay);
   clearGroup(world);
   objectViz.clear();
   objectMeshes.clear();
   if (splat) { try { splat.dispose?.(); } catch (_) {} splat = null; }
+  if (!keepScan) {
+    clearGroup(scanGroup);
+    objectModels.clear();
+    scan = null;
+  }
+}
+
+// ---------------------------------------------------------------- scan mesh (방 메시 · 가구 GLB)
+// AI 팀 파이프라인(메시 전용)의 앱용 결과: ARKit 좌표의 room.glb + 가구별 GLB + 유리 + space.json.
+// 서버가 예전 자리(3dgsUri · pointsUri)에 메시를 넣어 줘도 열리게, 파일 종류는 확장자와 PLY 머리말로 정한다.
+function urlExt(url) {
+  const name = String(url).split(/[?#]/)[0].split('/').pop() || '';
+  const i = name.lastIndexOf('.');
+  return i < 0 ? '' : name.slice(i + 1).toLowerCase();
+}
+const MESH_EXT = new Set(['glb', 'gltf', 'obj']), SPLAT_EXT = new Set(['splat', 'ksplat', 'spz']);
+
+// PLY 는 셋 다 될 수 있다: 면이 있으면 메시, 가우시안 속성이 있으면 3DGS, 아니면 점. 머리말만 읽고 끊는다
+async function plyKind(url) {
+  const res = await fetch(url);
+  if (!res.body?.getReader) return null;
+  const reader = res.body.getReader(), dec = new TextDecoder('latin1');
+  let head = '';
+  while (head.length < 65536) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    head += dec.decode(value, { stream: true });
+    if (head.includes('end_header')) break;
+  }
+  try { await reader.cancel(); } catch (_) {}
+  const faces = /element\s+face\s+(\d+)/.exec(head);
+  if (faces && Number(faces[1]) > 0) return 'mesh';
+  if (/property\s+\w+\s+(f_dc_0|scale_0|rot_0)\b/.test(head)) return 'splat';
+  return 'points';
+}
+
+async function sceneSource(p) {
+  if (p.meshUrl) return { kind: 'mesh', url: p.meshUrl };
+  for (const [url, hint] of [[p.splatUrl, 'splat'], [p.pointsUrl, 'points']]) {
+    if (!url) continue;
+    const ext = urlExt(url);
+    if (MESH_EXT.has(ext)) return { kind: 'mesh', url };
+    if (SPLAT_EXT.has(ext)) return { kind: 'splat', url };
+    if (ext === 'ply' && hint === 'splat') {
+      let kind = null;
+      try { kind = await plyKind(url); } catch (_) {}
+      return { kind: kind ?? hint, url };
+    }
+    return { kind: hint, url };          // 점 PLY 에 면이 있으면 loadScan 이 메시로 그린다
+  }
+  return { kind: 'blockout', url: null };
+}
+
+let sceneGltf = null;
+// 압축된 GLB(EXT_meshopt_compression · KHR_draco_mesh_compression)도 열 수 있게 디코더를 붙인 로더 (처음 쓸 때 한 번 만든다)
+async function gltfLoaderWithDecoders() {
+  if (sceneGltf) return sceneGltf;
+  const loader = new GLTFLoader();
+  try {
+    const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
+    loader.setMeshoptDecoder(MeshoptDecoder);
+  } catch (_) {}
+  try {
+    const { DRACOLoader } = await import('three/addons/loaders/DRACOLoader.js');
+    const draco = new DRACOLoader();
+    draco.setDecoderPath(new URL('../libs/draco/gltf/', import.meta.resolve('three/addons/loaders/DRACOLoader.js')).href);
+    loader.setDRACOLoader(draco);
+  } catch (_) {}
+  sceneGltf = loader;
+  return loader;
+}
+
+// 스캔으로 만든 메시(방 · 가구)는 사진 색에 그 방의 빛이 이미 들어 있어서 조명을 다시 입히지 않는다(unlit).
+// 색 정보(텍스처 · 꼭짓점 색)가 없는 메시만 조명을 받게 둔다. 실내에서 보므로 면의 앞뒤를 모두 그린다
+function prepareScan(root) {
+  root.traverse((c) => {
+    if (!c.isMesh) return;
+    const g = c.geometry, hasColor = g.hasAttribute('color');
+    const convert = (m) => {
+      if (m.map || hasColor) {
+        const b = new THREE.MeshBasicMaterial({
+          map: m.map ?? null, color: m.color ? m.color.clone() : new THREE.Color(0xffffff), vertexColors: hasColor,
+          side: THREE.DoubleSide, transparent: !!m.transparent, opacity: m.opacity ?? 1, alphaTest: m.alphaTest ?? 0,
+        });
+        b.name = m.name;
+        m.dispose?.();                               // 텍스처는 새 재질이 이어 쓴다
+        return b;
+      }
+      if (!g.hasAttribute('normal')) g.computeVertexNormals();
+      m.side = THREE.DoubleSide;
+      return m;
+    };
+    c.material = Array.isArray(c.material) ? c.material.map(convert) : convert(c.material);
+  });
+  return root;
+}
+
+async function loadScan(url, onProgress) {
+  const ext = urlExt(url);
+  if (ext === 'glb' || ext === 'gltf') {
+    const gltf = await (await gltfLoaderWithDecoders()).loadAsync(url, onProgress);
+    return prepareScan(gltf.scene);
+  }
+  if (ext === 'obj') {
+    const { OBJLoader } = await import('three/addons/loaders/OBJLoader.js');
+    return prepareScan(await new OBJLoader().loadAsync(url, onProgress));
+  }
+  const geo = await new PLYLoader().loadAsync(url, onProgress);
+  if (geo.index && geo.index.count >= 3) {             // 면이 있는 PLY = 메시 (TSDF · Poisson 결과)
+    return prepareScan(new THREE.Mesh(geo, stdMat(0xd9d6d0)));
+  }
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.012, sizeAttenuation: true, vertexColors: geo.hasAttribute('color') }));
+  pts.userData.footprint = pointFootprint(geo);
+  return pts;
+}
+
+// 점 하나가 덮을 실제 지름(m). 점구름 껍데기 넓이 ÷ 점 수로 평균 간격을 잡고 그 2.6배로 한다 (점이 무작위로 뿌려져 있어도 빈틈이 거의 안 보이는 크기. 1.8배는 벽에 검은 점이 보였고, 2.2배 0.6% · 2.6배 0.16% 가 빈틈).
+// 창밖으로 튄 점 때문에 범위가 부풀지 않게 2~98% 범위로 잰다
+function pointFootprint(geo) {
+  const pos = geo.getAttribute('position'), n = pos.count;
+  if (n < 10) return 0.012;
+  const step = Math.max(1, Math.floor(n / 20000)), xs = [], ys = [], zs = [];
+  for (let i = 0; i < n; i += step) { xs.push(pos.getX(i)); ys.push(pos.getY(i)); zs.push(pos.getZ(i)); }
+  const span = (a) => { a.sort((u, v) => u - v); return a[Math.floor(a.length * 0.98)] - a[Math.floor(a.length * 0.02)]; };
+  const w = span(xs), h = span(ys), d = span(zs);
+  const area = 2 * (w * d + w * h + d * h);
+  return clamp(2.6 * Math.sqrt(area / n), 0.006, 0.05);
+}
+
+// three.js 의 점 크기는 화면 각도(fov)를 모르므로 지금 fov 에 맞춰 실제 지름이 되게 고친다 (확대해도 빈틈이 안 생기게)
+function updatePointSize() {
+  const pts = scan?.root;
+  if (!pts?.isPoints || !pts.userData.footprint) return;
+  pts.material.size = pts.userData.footprint / Math.tan((camera.fov * D2R) / 2);
+}
+
+// ---------------------------------------------------------------- 스캔 속 가구 가리기 (점구름 · 방 메시 공통)
+// 백엔드는 AI 의 방 GLB 를 색 점구름(PLY)으로 바꿔 pointsUri 로 보내고(2026.11.18 문서), 원본 room.glb 와 가구별 GLB 도
+// meshUri · objects[].modelUri 로 붙이기로 했다(11.19 답변). 점구름에는 가구가 들어 있고, room.glb 에도 가구가 남아 있을 수 있다. 그래서 스캔(점 · 삼각형) 중
+//   ① 따로 온 가구 GLB 가 떠 있는 가구의 상자 안 → 늘 숨긴다 (가구 GLB 와 겹쳐 두 겹으로 보이지 않게)
+//   ② ‘가구 빼 보기’ 미리보기 · 입주 예상에서 뺀 가구의 상자 안 → 숨긴다
+// 상자는 4 cm 넉넉히 잡고, 바닥 · 천장 · 벽에 붙은 3 cm 띠는 남겨 구멍이 덜 나게 한다. 여러 상자에 들면 가장 작은 상자(책상 밑 의자)의 것으로 본다.
+// 빈자리를 채우지는 않는다 (가구 밑은 비어 보인다). 삼각형은 무게중심이 상자 안이면 그 가구 것으로 본다.
+const MASK_MARGIN = 0.04, SURFACE_KEEP = 0.03;
+
+function maskKey(objects) {
+  const r = room || {};
+  return JSON.stringify([r.floorY, r.ceilingY, r.walls, objects.map((o) => [o.objectId, o.position, o.rotation?.yaw, o.dimensions])]);
+}
+
+function distToWalls(x, z, walls) {
+  let best = Infinity;
+  for (const w of walls) {
+    const ax = w.from[0], az = w.from[1], bx = w.to[0], bz = w.to[1], dx = bx - ax, dz = bz - az;
+    const len2 = dx * dx + dz * dz;
+    const t = len2 > 1e-9 ? clamp(((x - ax) * dx + (z - az) * dz) / len2, 0, 1) : 0;
+    best = Math.min(best, Math.hypot(x - (ax + t * dx), z - (az + t * dz)));
+  }
+  return best;
+}
+
+// 가구 상자들 → test(x, y, z, n) = 그 자리가 드는 상자 번호 (-1 = 가구 아님 · 바닥 · 벽 · 천장 띠).
+// n = 면의 법선 [x, y, z](메시만, 점은 없음). 메시는 바닥 띠 안에서 위를 향한 면(바닥)만 남긴다(가구 밑면 · 옆면 아랫단은 가구).
+// 벽은 점 · 면 모두 RoomPlan 벽선에서 3 cm 띠를 남긴다. (벽과 나란한 면을 10 cm 까지 남기면 벽에 붙은 침대 머리판 앞면 같은 가구 면이 남아서 쓰지 않음)
+function boxTester(objects) {
+  const boxes = objects.map((o) => {
+    const d = o.dimensions, yaw = (o.rotation?.yaw ?? 0) * D2R;
+    return { id: o.objectId, x: o.position.x, z: o.position.z, cos: Math.cos(yaw), sin: Math.sin(yaw),
+             hx: d.width / 2 + MASK_MARGIN, hz: d.depth / 2 + MASK_MARGIN,
+             y0: o.position.y - d.height / 2 - MASK_MARGIN, y1: o.position.y + d.height / 2 + MASK_MARGIN,
+             vol: d.width * d.depth * d.height };
+  }).sort((a, b) => a.vol - b.vol);
+  const ids = boxes.map((b) => b.id);
+  if (!boxes.length || !room) return { ids, test: () => -1, near: () => false };
+  const reach = (b) => Math.hypot(b.hx, b.hz);
+  const lo = { x: Math.min(...boxes.map((b) => b.x - reach(b))), z: Math.min(...boxes.map((b) => b.z - reach(b))), y: Math.min(...boxes.map((b) => b.y0)) };
+  const hi = { x: Math.max(...boxes.map((b) => b.x + reach(b))), z: Math.max(...boxes.map((b) => b.z + reach(b))), y: Math.max(...boxes.map((b) => b.y1)) };
+  const yMin = room.floorY + SURFACE_KEEP, yMax = room.ceilingY - SURFACE_KEEP, walls = room.walls || [];
+  const test = (x, y, z, n) => {
+    if (x < lo.x || x > hi.x || z < lo.z || z > hi.z || y < lo.y || y > hi.y || y > yMax) return -1;
+    if (y < yMin && (!n || n[1] > 0.7)) return -1;
+    for (let k = 0; k < boxes.length; k++) {
+      const b = boxes[k];
+      if (y < b.y0 || y > b.y1) continue;
+      const dx = x - b.x, dz = z - b.z;
+      if (Math.abs(b.cos * dx - b.sin * dz) > b.hx || Math.abs(b.sin * dx + b.cos * dz) > b.hz) continue;
+      if (walls.length && distToWalls(x, z, walls) < SURFACE_KEEP) return -1;      // 벽에 붙은 점 · 면은 벽으로 본다
+      return k;
+    }
+    return -1;
+  };
+  const near = (x, y, z) => x >= lo.x && x <= hi.x && z >= lo.z && z <= hi.z && y >= lo.y && y <= hi.y;   // 어느 상자 근처도 아니면 바로 건너뛴다
+  return { ids, test, near };
+}
+
+// 점 · 삼각형마다 어느 가구 상자에 드는지 한 번 계산해 둔다 (50만 점 · 가구 열 개 남짓이면 수십 ms). 가구 정보가 같으면 다시 하지 않는다
+function prepareScanMask(objects) {
+  const root = scan?.root;
+  if (!root || !room) return;
+  const key = maskKey(objects);
+  if (root.userData.maskKey === key) return;
+  const t0 = performance.now();
+  const tester = boxTester(objects);
+  root.userData.maskKey = key;
+  root.userData.maskIds = tester.ids;
+  root.userData.hiddenKey = null;
+  if (root.isPoints) preparePointsMask(root, tester.test);
+  else {
+    root.updateWorldMatrix(true, true);
+    root.traverse((c) => { if (c.isMesh) prepareMeshMask(c, tester); });
+  }
+  root.userData.maskMs = Math.round(performance.now() - t0);
+}
+
+function preparePointsMask(pts, test) {
+  const geo = pts.geometry, pos = geo.getAttribute('position'), nor = geo.getAttribute('normal'), n = pos.count;
+  const owner = new Int16Array(n);
+  for (let i = 0; i < n; i++) owner[i] = test(pos.getX(i), pos.getY(i), pos.getZ(i), nor ? [nor.getX(i), nor.getY(i), nor.getZ(i)] : null);   // 점에 법선이 있으면 메시처럼 판단
+  // 보이는 점만 앞으로 모아 그리게 인덱스를 한 번 만들어 둔다 (다시 만들지 않고 내용만 바꿔 GPU 메모리가 늘지 않게)
+  if (!geo.index || geo.index.count !== n) {
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(n), 1).setUsage(THREE.DynamicDrawUsage));
+  }
+  pts.userData.mask = { owner, hidden: 0 };
+}
+
+// 메시: 가구 상자 안 삼각형을 인덱스 뒤쪽으로 모아 두고(원래 순서는 그림에 상관없다), 숨길 때는 그리는 범위만 줄인다.
+// 큰 방 메시(삼각형 190만 개)에서도 인덱스를 통째로 복사하지 않게 상자 안 삼각형만 따로 들고 있는다
+function prepareMeshMask(mesh, { test, near }) {
+  const geo = mesh.geometry, pos = geo.getAttribute('position');
+  if (!pos || geo.groups.length > 1) return;            // 재질이 여러 묶음인 메시는 건너뛴다 (GLB 는 재질마다 메시가 따로 온다)
+  if (!geo.index) {
+    const n = pos.count, arr = n > 65535 ? new Uint32Array(n) : new Uint16Array(n);
+    for (let i = 0; i < n; i++) arr[i] = i;
+    geo.setIndex(new THREE.BufferAttribute(arr, 1));
+  }
+  const idx = geo.index.array, old = mesh.userData.mask;
+  if (old) idx.set(old.ownedTris, old.unowned * 3);      // 예전에 나눠 둔 것을 원래 목록으로 되돌린 뒤 다시 나눈다
+  const T = Math.floor(idx.length / 3), e = mesh.matrixWorld.elements;
+  const owner = new Int16Array(T);
+  let O = 0;
+  // 큰 방 메시(삼각형 수백만 개)를 빨리 돌게: 위치 배열을 바로 읽고, 무게중심이 어느 가구 상자 근처도 아니면 법선은 계산하지 않는다
+  const flat = !pos.isInterleavedBufferAttribute && !pos.normalized && pos.itemSize === 3 ? pos.array : null;
+  const gx = flat ? (i) => flat[3 * i] : (i) => pos.getX(i), gy = flat ? (i) => flat[3 * i + 1] : (i) => pos.getY(i), gz = flat ? (i) => flat[3 * i + 2] : (i) => pos.getZ(i);
+  for (let t = 0; t < T; t++) {
+    const a = idx[3 * t], b = idx[3 * t + 1], c = idx[3 * t + 2];
+    const ax = gx(a), ay = gy(a), az = gz(a), bx = gx(b), by = gy(b), bz = gz(b), cx = gx(c), cy = gy(c), cz = gz(c);
+    const mx = (ax + bx + cx) / 3, my = (ay + by + cy) / 3, mz = (az + bz + cz) / 3;
+    const wx = e[0] * mx + e[4] * my + e[8] * mz + e[12], wy = e[1] * mx + e[5] * my + e[9] * mz + e[13], wz = e[2] * mx + e[6] * my + e[10] * mz + e[14];
+    if (!near(wx, wy, wz)) { owner[t] = -1; continue; }
+    // 면의 법선(방 좌표의 위쪽 성분). 회전 · 크기 변환은 대개 균일해서 꼭짓점을 옮긴 뒤 외적한 것과 같다
+    const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const lx = uy * vz - uz * vy, ly = uz * vx - ux * vz, lz = ux * vy - uy * vx;
+    const nx = e[0] * lx + e[4] * ly + e[8] * lz, ny = e[1] * lx + e[5] * ly + e[9] * lz, nz = e[2] * lx + e[6] * ly + e[10] * lz;
+    const nl = Math.hypot(nx, ny, nz);
+    const k = test(wx, wy, wz, nl > 1e-12 ? [nx / nl, ny / nl, nz / nl] : [0, 1, 0]);
+    owner[t] = k;
+    if (k >= 0) O++;
+  }
+  if (!O) {
+    mesh.userData.mask = null;
+    geo.setDrawRange(0, Infinity);
+    if (old) { geo.index.clearUpdateRanges?.(); geo.index.needsUpdate = true; }
+    return;
+  }
+  const ownedTris = new idx.constructor(O * 3), ownedOwner = new Int16Array(O);
+  let o = 0, w = 0;
+  for (let t = 0; t < T; t++) {
+    if (owner[t] >= 0) {
+      ownedTris[3 * o] = idx[3 * t]; ownedTris[3 * o + 1] = idx[3 * t + 1]; ownedTris[3 * o + 2] = idx[3 * t + 2];
+      ownedOwner[o++] = owner[t];
+    } else {
+      if (w !== t) { idx[3 * w] = idx[3 * t]; idx[3 * w + 1] = idx[3 * t + 1]; idx[3 * w + 2] = idx[3 * t + 2]; }
+      w++;
+    }
+  }
+  idx.set(ownedTris, w * 3);
+  geo.index.clearUpdateRanges?.();
+  geo.index.needsUpdate = true;
+  // 순서를 통째로 바꿨으니 다음 그리기 전까지는 인덱스 전체를 GPU 로 보내야 한다(synced = false).
+  // 방 메시는 가구 GLB 를 받는 동안 이미 한 번 그려져서 GPU 에 원래 순서가 올라가 있다. 이때 뒤쪽만 보내면
+  // 앞쪽이 옛 순서로 남아 삼각형 수천 개가 빠지고 배경색 구멍(검은 조각)으로 보인다 (실서버 room.glb + 가구 GLB, 11.19)
+  mesh.userData.mask = { unowned: w, ownedTris, ownedOwner, hidden: 0, synced: false };
+  if (!mesh.userData.maskSyncHook) {
+    mesh.userData.maskSyncHook = true;
+    const after = mesh.onAfterRender;                    // 그렸다 = 그 전에 바뀐 인덱스가 GPU 에 올라갔다
+    mesh.onAfterRender = function (...args) {
+      const mk = this.userData.mask;
+      if (mk) mk.synced = true;
+      return after.apply(this, args);
+    };
+  }
+}
+
+function applyPointsMask(pts, hide) {
+  const m = pts.userData.mask;
+  if (!m) return;
+  const geo = pts.geometry, idx = geo.index.array, owner = m.owner;
+  let c = 0;
+  for (let i = 0; i < owner.length; i++) { const k = owner[i]; if (k < 0 || !hide[k]) idx[c++] = i; }
+  geo.index.needsUpdate = true;
+  geo.setDrawRange(0, c);
+  m.hidden = owner.length - c;
+}
+
+function applyMeshMask(mesh, hide) {
+  const m = mesh.userData.mask;
+  if (!m) return;
+  const geo = mesh.geometry, idx = geo.index.array, tris = m.ownedTris, own = m.ownedOwner;
+  let w = m.unowned;
+  for (let o = 0; o < own.length; o++) {
+    if (hide[own[o]]) continue;
+    idx[3 * w] = tris[3 * o]; idx[3 * w + 1] = tris[3 * o + 1]; idx[3 * w + 2] = tris[3 * o + 2];
+    w++;
+  }
+  if (geo.index.addUpdateRange) {
+    geo.index.clearUpdateRanges();
+    // 앞쪽(가구 아닌 삼각형)이 이미 GPU 에 올라가 있으면 바뀐 뒤쪽만 보낸다. 아직이면 범위를 두지 않아 전체가 올라간다
+    if (m.synced) geo.index.addUpdateRange(m.unowned * 3, own.length * 3);
+  }
+  geo.index.needsUpdate = true;
+  geo.setDrawRange(0, w * 3);
+  m.hidden = own.length - (w - m.unowned);
+}
+
+// 스캔에서 숨길 가구.
+//   점구름: 뺀 가구 + 가구 GLB 가 따로 떠 있는 가구 (점구름은 가구를 모두 담고 있어 GLB 와 두 겹이 된다)
+//   방 메시: 뺀 가구 중 가구 GLB 가 없는 것만. 가구 GLB 가 있는 가구는 room.glb 에서 이미 잘려 있다(백엔드 11.19) → 그 자리 벽 · 바닥을 건드리지 않는다
+//   단, 장면 파일에서 이미 빠져 있는 가구(서버가 만든 입주 예상 PLY)는 다시 가리지 않는다
+function scanHiddenIds(removed) {
+  const s = new Set(removed);
+  const points = !!scan?.root?.isPoints;
+  for (const id of objectModels.keys()) { if (points) s.add(id); else s.delete(id); }
+  for (const id of sceneRemoved) s.delete(id);
+  return s;
+}
+
+function applyScanMask(hiddenIds) {
+  const root = scan?.root, ids = root?.userData.maskIds;
+  if (!ids) return;
+  const flags = ids.map((id) => (hiddenIds.has(id) ? 1 : 0)), key = flags.join('');
+  if (root.userData.hiddenKey === key) return;
+  root.userData.hiddenKey = key;
+  const hide = Uint8Array.from(flags);
+  if (root.isPoints) applyPointsMask(root, hide);
+  else root.traverse((c) => { if (c.isMesh) applyMeshMask(c, hide); });
+}
+
+// 방과 따로 온 가구 GLB (objects[].modelUri). 백엔드 규칙(11.19): 원점 = 가구 바운딩 박스 중심인 로컬 좌표, position = 방 안의 중심,
+// rotation.yaw = Y축 회전(도), 미터 → 기본값 'center'. GLB 가 원점에 놓여 있지 않으면(방 좌표로 저장된 경우 등) 범위를 보고 다시 고른다.
+// objectFrame = GLB 가 어떤 좌표로 저장됐나:
+//   'center' 원점 = 상자 중심, 축은 상자에 맞춤(yaw 0) · 'auto' GLB 범위를 보고 아래 중에서 고른다 · 'floor' 원점 = 상자 바닥 중심
+//   · 'world' 이미 방(ARKit) 좌표 · 'center-raw' · 'floor-raw' 원점은 그렇지만 이미 yaw 만큼 돌아가 있음 · 'fit' 치수에 맞춰 늘리고 바닥 중심에
+// 가구 하나를 못 읽어도 방은 연다. 늦게 끝난 호출이면 false
+async function loadObjectModels(objects, removed, sceneFrame, stale) {
+  const wanted = new Map(objects.filter((o) => o.modelUrl).map((o) => [o.objectId, o]));
+  for (const [id, m] of [...objectModels]) {              // 이번 장면에 없는 가구 · 주소가 바뀐 가구는 지운다
+    if (wanted.get(id)?.modelUrl === m.url) continue;
+    scanGroup.remove(m.group);
+    disposeTree(m.group);
+    objectModels.delete(id);
+  }
+  for (const [id, o] of wanted) {
+    let m = objectModels.get(id);
+    if (!m) {
+      try {
+        const gltf = await (await gltfLoaderWithDecoders()).loadAsync(o.modelUrl);
+        if (stale()) { disposeTree(gltf.scene); return false; }
+        const b = new THREE.Box3().setFromObject(gltf.scene);       // GLB 자기 좌표에서의 범위 (좌표 기준 판단용)
+        const group = new THREE.Group();
+        group.add(prepareScan(gltf.scene));
+        scanGroup.add(group);
+        m = { url: o.modelUrl, group, box: b.isEmpty() ? null : { center: b.getCenter(new THREE.Vector3()), size: b.getSize(new THREE.Vector3()) } };
+        objectModels.set(id, m);
+      } catch (e) {
+        console.warn('가구 모델을 읽지 못했습니다', id, e?.message || e);
+        continue;
+      }
+    }
+    placeObjectModel(m, o, o.modelFrame || sceneFrame || 'center');
+    m.group.visible = !removed.has(id);
+    objectMeshes.set(id, m.group);
+  }
+  return !stale();
+}
+
+function placeObjectModel(m, o, frame) {
+  const group = m.group, model = group.children[0], dm = o.dimensions;
+  model.position.set(0, 0, 0);
+  model.scale.set(1, 1, 1);
+  group.rotation.set(0, 0, 0);
+  if (frame === 'auto') frame = m.box ? detectFrame(m.box, o) : 'center';
+  else if (frame === 'center' && m.box && offCenter(m.box, o)) {
+    frame = detectFrame(m.box, o);                     // 규칙과 달리 원점에서 멀리 있는 GLB → 범위로 자리를 다시 고른다
+    console.warn('가구 GLB 가 원점(상자 중심)에 있지 않아 범위로 자리를 고름', o.objectId, frame);
+  }
+  m.frame = frame;
+  if (frame === 'world') { group.position.set(0, 0, 0); return; }
+  const raw = frame.endsWith('-raw'), base = raw ? frame.slice(0, -4) : frame;
+  if (base === 'fit') fitToDims(model, dm);
+  const y = base === 'floor' || base === 'fit' ? o.position.y - dm.height / 2 : o.position.y;
+  group.position.set(o.position.x, y, o.position.z);
+  group.rotation.y = raw ? 0 : (o.rotation?.yaw ?? 0) * D2R;
+}
+
+// GLB 범위의 가운데가 원점에서 상자 크기의 1/4 이상(+5 cm) 떨어져 있으면 '상자 중심 원점'이 아니다
+function offCenter(box, o) {
+  const d = o.dimensions, c = box.center;
+  return Math.hypot(c.x, c.y, c.z) > 0.25 * Math.hypot(d.width, d.height, d.depth) + 0.05;
+}
+
+// GLB 범위(가운데 · 크기)가 어느 저장 방식과 가장 잘 맞는가. 같으면 앞의 것(상자 중심)을 고른다.
+// 크기가 어느 것과도 크게 다르면(단위가 다르거나 크기를 맞추지 않은 모델) 치수에 맞춰 늘린다(fit)
+function detectFrame(box, o) {
+  const d = o.dimensions, th = (o.rotation?.yaw ?? 0) * D2R, c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
+  const canon = [d.width, d.height, d.depth];
+  const turned = [d.width * c + d.depth * s, d.height, d.width * s + d.depth * c];      // yaw 만큼 돈 상자의 축 정렬 범위
+  const P = o.position, diag = Math.hypot(d.width, d.height, d.depth) || 1, sum = d.width + d.height + d.depth || 1;
+  const cands = [
+    ['center', [0, 0, 0], canon], ['floor', [0, d.height / 2, 0], canon], ['world', [P.x, P.y, P.z], turned],
+    ['center-raw', [0, 0, 0], turned], ['floor-raw', [0, d.height / 2, 0], turned],
+  ];
+  const bc = box.center, bs = box.size;
+  let best = null;
+  for (const [name, ec, es] of cands) {
+    const pe = Math.hypot(bc.x - ec[0], bc.y - ec[1], bc.z - ec[2]) / diag;
+    const se = (Math.abs(bs.x - es[0]) + Math.abs(bs.y - es[1]) + Math.abs(bs.z - es[2])) / sum;
+    if (!best || pe + se < best.score - 1e-6) best = { name, score: pe + se, se };
+  }
+  return best.se > 0.5 ? 'fit' : best.name;
+}
+
+// 서버가 방 구조(roomGeometry)를 안 줬으면 방 메시의 크기에서 바닥 · 천장 · 범위를 잡고 앱에 알린다
+function adoptScanBounds() {
+  const target = scan?.root || (splat ?? null);
+  if (!target) return;
+  const b = new THREE.Box3().setFromObject(target);
+  if (b.isEmpty() || !Number.isFinite(b.min.x)) return;
+  const v = (p) => ({ x: p.x, y: p.y, z: p.z });
+  room = { ...room, floorY: b.min.y, ceilingY: b.max.y, bboxMin: v(b.min), bboxMax: v(b.max) };
+  post({ type: 'bounds', min: room.bboxMin, max: room.bboxMax });
 }
 
 // ---------------------------------------------------------------- glass (서버가 LiDAR 로 찾은 투명 유리)
@@ -316,6 +798,7 @@ function buildBlockout(objects, removed, glassList = []) {
   }
 
   for (const o of objects) {
+    if (o.modelUrl) continue;                   // 가구 GLB 가 따로 오면 loadObjectModels 가 그린다
     const g = furnitureModel(o.category, o.dimensions, false);
     g.position.set(o.position.x, o.position.y - o.dimensions.height / 2, o.position.z);   // 상자 중심 → 바닥 중심
     g.rotation.y = (o.rotation?.yaw ?? 0) * D2R;
@@ -567,7 +1050,6 @@ cvs.addEventListener('wheel', (e) => {
 
 
 // ---------------------------------------------------------------- furniture
-const gltfLoader = new GLTFLoader();
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 ray.params.Line.threshold = 0.01;     // 기본값 1 m 이면 가구 근처 터치가 모두 드래그로 잡힌다
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -670,7 +1152,7 @@ async function addFurniture(f) {
     if (f.url === 'box') {
       model = furnitureModel(f.kind, f.dims, true);      // GLB 없이 치수대로 (데모 가구)
     } else {
-      const gltf = await gltfLoader.loadAsync(f.url);
+      const gltf = await (await gltfLoaderWithDecoders()).loadAsync(f.url);
       model = gltf.scene;
       fitToDims(model, f.dims);
     }
@@ -738,6 +1220,7 @@ function setRemovedObjects(ids) {
   const s = new Set(ids || []);
   for (const [id, v] of objectViz) { v.lines.visible = !s.has(id); v.label.visible = !s.has(id); }
   for (const [id, m] of objectMeshes) m.visible = !s.has(id);
+  applyScanMask(scanHiddenIds(s));
 }
 
 function setOverlay(on) {
@@ -756,6 +1239,7 @@ window.addEventListener('resize', () => {
 });
 
 renderer.setAnimationLoop(() => {
+  updatePointSize();
   if (room) {
     if (mode !== 'walk') { controls.update(); updateCutaway(); }
     else { camera.position.copy(walk.pos); camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ'); }
@@ -766,6 +1250,25 @@ renderer.setAnimationLoop(() => {
 
 window.DV = {
   loadScene, setMode, resetView, setOverlay, setObjectOwnership, setRemovedObjects,
+  debugInfo: () => {
+    const root = scan?.root;
+    const frames = Object.fromEntries([...objectModels].map(([id, m]) => [id, m.frame]));
+    if (!root) return { scan: null, frames };
+    if (root.isPoints) {
+      const m = root.userData.mask;
+      return { scan: 'points', points: root.geometry.getAttribute('position').count, drawn: root.geometry.drawRange.count,
+               footprint: root.userData.footprint, size: root.material.size, hidden: m?.hidden ?? 0,
+               owned: m ? m.owner.reduce((a, v) => a + (v >= 0 ? 1 : 0), 0) : 0, maskMs: root.userData.maskMs, frames };
+    }
+    let tris = 0, owned = 0, hidden = 0;
+    root.traverse((c) => {
+      if (!c.isMesh) return;
+      const g = c.geometry, mk = c.userData.mask;
+      tris += Math.floor((g.index ? g.index.count : g.getAttribute('position').count) / 3);
+      if (mk) { owned += mk.ownedOwner.length; hidden += mk.hidden; }
+    });
+    return { scan: 'mesh', tris, owned, hidden, maskMs: root.userData.maskMs, frames };
+  },
   addFurniture, setFurnitureState, setFurnitureTransform, removeFurniture, select,
 };
 post({ type: 'ready' });

@@ -400,3 +400,131 @@ struct FurniturePickerSheet: View {
         }
     }
 }
+
+// MARK: - 3D 파일 하나 열어 보기 (설정 › 3D 뷰어 시험)
+
+struct MeshPreviewItem: Identifiable {
+    let id = UUID()
+    let name: String            // 파일 이름 (화면 위에 보여 준다)
+    let viewerURL: String       // AssetCache.importLocal 이 돌려준 dulleobang://app/assets/… 주소
+}
+
+/// 방 구조(roomGeometry) 없이 3D 파일 하나만 연다. AI 팀이 만든 room.glb 가 폰에서 열리는지, 어떻게 보이는지
+/// 서버 없이 확인하는 용도. 바닥 · 천장 · 걸을 수 있는 범위는 뷰어가 메시 크기에서 잡아 알려 준다(bounds)
+struct MeshPreviewView: View {
+    let item: MeshPreviewItem
+    @StateObject private var viewer = ViewerController()
+    @State private var mode: ViewMode = .walk
+    @State private var loading: String? = "3D 뷰어 준비 중"
+    @State private var progress: Double?
+    @State private var sizeText = ""
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 38, height: 38)
+                        .background(Color.white.opacity(0.14), in: Circle())
+                }
+                .accessibilityLabel("닫기")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("3D 파일 열어 보기").font(.caption2).foregroundStyle(Color.white.opacity(0.7))
+                    Text(item.name).font(.headline.weight(.bold)).foregroundStyle(Color.white).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Button { viewer.call("resetView") } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 38, height: 38)
+                        .background(Color.white.opacity(0.14), in: Circle())
+                }
+                .accessibilityLabel("시점 초기화")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black)
+            ZStack {
+                ViewerWebView(controller: viewer)
+                VStack(spacing: 8) {
+                    HStack {
+                        if !sizeText.isEmpty {
+                            Text(sizeText)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.black.opacity(0.55), in: Capsule())
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    Spacer()
+                    Picker("보기", selection: $mode) {
+                        Text("둘러보기").tag(ViewMode.walk)
+                        Text("평면").tag(ViewMode.overview)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                }
+                .padding(12)
+                if let loading {
+                    VStack(spacing: 10) {
+                        if let p = progress { ProgressView(value: p).frame(width: 200) } else { ProgressView() }
+                        Text(loading).font(.callout)
+                    }
+                    .padding(20)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .onChange(of: mode) { _, m in viewer.call("setMode", m.rawValue) }
+        .task { await open() }
+        .errorAlert($error)
+    }
+
+    private func open() async {
+        viewer.onEvent = { ev in
+            switch ev {
+            case .loaded:
+                loading = nil
+                progress = nil
+            case .progress(let value):
+                progress = value
+            case .error(let message):
+                error = message
+                loading = nil
+            case .meshFailed(let message):
+                error = "파일을 열지 못했습니다" + (message.isEmpty ? "" : ": \(message)")
+                loading = nil
+            case .crashed:
+                error = "파일이 너무 커서 3D 뷰어가 멈췄습니다 (이 기기의 메모리가 모자람). 삼각형 수 · 텍스처 크기를 줄인 파일로 다시 해 보세요."
+                loading = nil
+            case .bounds(let lo, let hi):
+                sizeText = String(format: "%.2f × %.2f m · 높이 %.2f m", hi.x - lo.x, hi.z - lo.z, hi.y - lo.y)
+            default:
+                break
+            }
+        }
+        guard await viewer.waitUntilReady() else {
+            error = "3D 뷰어를 시작하지 못했습니다 (인터넷 연결 확인)"
+            loading = nil
+            return
+        }
+        loading = "3D 파일 여는 중"
+        // .glb · .gltf · .obj 는 메시. PLY 는 3dgsUri 자리로 넘기면 뷰어가 머리말을 보고 메시 · 3DGS · 점 중에 고른다
+        let isMesh = SceneAsset.isMesh(item.viewerURL)
+        let empty = Room(geometry: nil, dimensions: nil, objects: [])          // 방 구조 없음 → 뷰어가 메시 크기에서 범위를 잡는다
+        viewer.call("loadScene", ScenePayload(meshUrl: isMesh ? item.viewerURL : nil, objectModels: [:],
+                                              splatUrl: isMesh ? nil : item.viewerURL, pointsUrl: nil,
+                                              room: RoomPayload(empty), objects: [], removed: [], sceneRemoved: [], glass: []))
+        viewer.call("setMode", mode.rawValue)
+        viewer.call("setOverlay", false)
+    }
+}

@@ -11,6 +11,9 @@ enum ViewerEvent {
     case select(String?)
     case transform(id: String, x: Double, z: Double, yaw: Double, final: Bool)
     case furnitureLoaded(String)
+    case bounds(min: Vec3, max: Vec3)       // 방 구조 없이 연 방 메시의 범위 (뷰어가 메시 크기에서 잡아 알려 준다)
+    case meshFailed(String)                 // 방 메시를 못 읽음 (깨진 파일 · 메모리 부족) → 점구름이 있으면 그것으로 다시 연다
+    case crashed                            // 뷰어(웹 프로세스)가 죽었다가 다시 떴다. 큰 메시로 메모리가 모자라면 iOS 가 웹 프로세스를 끝낸다
 
     init?(_ body: Any) {
         guard let d = body as? [String: Any], let type = d["type"] as? String else { return nil }
@@ -25,6 +28,17 @@ enum ViewerEvent {
             guard let id = d["id"] as? String else { return nil }
             self = .transform(id: id, x: num("x"), z: num("z"), yaw: num("yaw"), final: (d["final"] as? Bool) ?? false)
         case "furnitureLoaded": self = .furnitureLoaded(d["id"] as? String ?? "")
+        case "meshFailed": self = .meshFailed(d["message"] as? String ?? "")
+        case "bounds":
+            func vec(_ k: String) -> Vec3? {
+                guard let v = d[k] as? [String: Any],
+                      let x = (v["x"] as? NSNumber)?.doubleValue,
+                      let y = (v["y"] as? NSNumber)?.doubleValue,
+                      let z = (v["z"] as? NSNumber)?.doubleValue else { return nil }
+                return Vec3(x: x, y: y, z: z)
+            }
+            guard let lo = vec("min"), let hi = vec("max") else { return nil }
+            self = .bounds(min: lo, max: hi)
         default: return nil
         }
     }
@@ -40,6 +54,7 @@ final class ViewerController: ObservableObject {
 
     private var pending: [String] = []
     private let proxy = ScriptMessageProxy()
+    private let navigation = NavigationProxy()               // WKWebView 는 delegate 를 약하게 잡으므로 여기서 들고 있는다
     private let encoder = JSONEncoder()
 
     init() {
@@ -54,7 +69,17 @@ final class ViewerController: ObservableObject {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isInspectable = true                                  // Mac Safari › 개발자 메뉴에서 JS 디버깅
         proxy.onMessage = { [weak self] body in self?.receive(body) }
+        navigation.onTerminate = { [weak self] in self?.webContentDidTerminate() }
+        webView.navigationDelegate = navigation
         webView.load(URLRequest(url: ViewerAssetHandler.indexURL))
+    }
+
+    /// 웹 프로세스가 죽음 (메모리 부족 등). 화면이 빈 채로 멈추지 않게 뷰어를 새로 띄우고, 장면은 받은 쪽(.crashed)이 다시 연다
+    private func webContentDidTerminate() {
+        isReady = false
+        pending.removeAll()
+        webView.load(URLRequest(url: ViewerAssetHandler.indexURL))
+        onEvent?(.crashed)
     }
 
     /// DV.<fn>(args…) 호출. 뷰어 준비 전이면 큐에 쌓았다가 ready 이벤트 때 보낸다.
@@ -92,6 +117,14 @@ final class ViewerController: ObservableObject {
         let deadline = Date().addingTimeInterval(timeout)
         while !isReady && Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
         return isReady
+    }
+}
+
+/// 웹 프로세스 종료를 알려 주는 얇은 프록시 (WebKit 은 메인 스레드에서 부른다)
+final class NavigationProxy: NSObject, WKNavigationDelegate {
+    var onTerminate: (@MainActor () -> Void)?
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        MainActor.assumeIsolated { onTerminate?() }
     }
 }
 
