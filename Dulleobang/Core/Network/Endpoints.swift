@@ -22,13 +22,17 @@ struct ListingQuery: Hashable {
     var roomType: String? = nil            // ONE_ROOM | TWO_ROOM | THREE_ROOM | OFFICETEL
     var maxDeposit: Int? = nil             // 만원
     var maxMonthly: Int? = nil             // 만원
+    var spaceOnly = false                  // 3D 공간이 준비된 매물만 (서버에 보내지 않고 받은 목록에서 거른다)
     var bounds: GeoBounds? = nil
 
-    var isFiltered: Bool { dealType != nil || roomType != nil || maxDeposit != nil || maxMonthly != nil }
+    var isFiltered: Bool { dealType != nil || roomType != nil || maxDeposit != nil || maxMonthly != nil || spaceOnly }
+    /// 필터 시트에서만 거는 가격 조건이 있는가 (필터 버튼 강조용 · 빠른 칩은 따로 보인다)
+    var hasPriceLimit: Bool { maxDeposit != nil || maxMonthly != nil }
 
     var items: [URLQueryItem] {
         var q: [URLQueryItem] = []
-        if let t = text?.trimmed, !t.isEmpty { q.append(.init(name: "location", value: t)) }
+        // 서버는 검색어를 300자까지 받는다
+        if let t = text?.trimmed, !t.isEmpty { q.append(.init(name: "location", value: String(t.prefix(300)))) }
         if let dealType { q.append(.init(name: "dealType", value: dealType)) }
         if let roomType { q.append(.init(name: "roomType", value: roomType)) }
         if let maxDeposit { q.append(.init(name: "maxDeposit", value: String(maxDeposit))) }
@@ -63,6 +67,7 @@ struct ListingQuery: Hashable {
             let tokens = t.split(separator: " ").map(String.init)
             if !tokens.allSatisfy({ hay.contains($0) }) { return false }
         }
+        if spaceOnly && !l.isSpaceReady { return false }
         if let dealType, Fmt.dealKey(l) != dealType { return false }
         if let roomType, l.roomType != roomType, Fmt.roomType(l.roomType) != Fmt.roomType(roomType) { return false }
         if let maxDeposit, l.price.deposit > maxDeposit { return false }

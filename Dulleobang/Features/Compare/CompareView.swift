@@ -90,7 +90,7 @@ struct CompareView: View {
             HStack(spacing: 12) {
                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(on ? DB.purple : DB.faint)
+                    .foregroundStyle(on ? DB.accent : DB.faint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(DB.ink)
                     if !subtitle.isEmpty { Text(subtitle).font(.caption).foregroundStyle(DB.sub) }

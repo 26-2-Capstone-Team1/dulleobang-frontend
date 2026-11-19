@@ -19,6 +19,75 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertTrue(l.isSpaceReady)
     }
 
+    /// AI 메시 파이프라인 결과: 방 메시(meshUri) + 가구별 GLB(objects[].modelUri)
+    func testSpaceWithRoomMeshAndFurnitureModels() throws {
+        let s = try decode(SpaceResponse.self, #"""
+        {"meshUri": "/files/s1/room.glb",
+         "roomGeometry": {"floorHeight": -1.4, "ceilingHeight": 2.4, "walls": [],
+                          "boundingBox": {"min": {"x": -2, "y": -1.4, "z": -3}, "max": {"x": 2, "y": 1.0, "z": 1}}},
+         "objects": [{"objectId": "chair_2", "category": "chair", "position": {"x": 0.2, "y": -1.0, "z": -1.1},
+                      "rotation": {"yaw": 90}, "dimensions": {"width": 0.45, "height": 0.77, "depth": 0.57},
+                      "ownershipType": "PERSONAL", "modelUri": "/files/s1/chair_2.glb"},
+                     {"objectId": "sink_1", "category": "sink", "position": {"x": 1, "y": -0.9, "z": 0.5},
+                      "rotation": {"yaw": 0}, "dimensions": {"width": 1.2, "height": 0.9, "depth": 0.6}}]}
+        """#)
+        XCTAssertEqual(s.meshUri, "/files/s1/room.glb")
+        XCTAssertNil(s.threeDgsUri)
+        XCTAssertEqual(s.objects.first?.modelUri, "/files/s1/chair_2.glb")
+        XCTAssertNil(s.objects.last?.modelUri)                      // 방 메시에 붙어 있는 가구는 모델 없이 온다
+        XCTAssertTrue(Room(space: s).hasGeometry)
+
+        // 예전 응답(3DGS)도 그대로 읽는다. 방 구조가 없으면 뷰어가 메시 크기에서 범위를 잡는다
+        let old = try decode(SpaceResponse.self, #"""{"3dgsUri": "/files/scene_current.ply", "objects": []}"""#)
+        XCTAssertNil(old.meshUri)
+        XCTAssertEqual(old.threeDgsUri, "/files/scene_current.ply")
+        XCTAssertFalse(Room(space: old).hasGeometry)
+
+        XCTAssertTrue(SceneAsset.isMesh("https://cdn.example/s1/room.glb?X-Amz-Signature=abc"))
+        XCTAssertTrue(SceneAsset.isMesh("/files/room.OBJ"))
+        XCTAssertFalse(SceneAsset.isMesh("/files/scene_current.ply"))   // PLY 는 뷰어가 머리말로 정한다
+        XCTAssertFalse(SceneAsset.isMesh("/files/scene.ksplat"))
+    }
+
+    /// 실서버 백엔드 응답 (2026.11.18 문서 · 11.19 답변): 공간 = 색 점구름 pointsUri + roomGeometry, 3dgsUri 는 null.
+    /// 원본 room.glb · 가구별 GLB 는 meshUri · objects[].modelUri 로 붙을 예정. 입주 예상 = 가구를 뺀 새 PLY 의 pointsUri + remainingObjects
+    func testBackendPointCloudSpaceAndRoomState() throws {
+        let s = try decode(SpaceResponse.self, #"""
+        {"3dgsUri": null, "pointsUri": "/files/s1/points.ply", "meshUri": "/files/s1/room.glb",
+         "roomGeometry": {"floorHeight": -1.3, "ceilingHeight": 2.4,
+                          "walls": [{"id": "w1", "from": [-2, -3], "to": [2, -3], "height": 2.4}]},
+         "objects": [{"objectId": 3, "category": "bed", "position": {"x": 1, "y": -0.85, "z": -2},
+                      "rotation": {"yaw": 0}, "dimensions": {"width": 1.1, "height": 0.9, "depth": 2.0},
+                      "ownershipType": "PERSONAL", "modelUri": "/files/s1/objects/3.glb"},
+                     {"objectId": 4, "category": "storage", "position": {"x": -1, "y": -0.3, "z": -2.6},
+                      "rotation": {"yaw": 90}, "dimensions": {"width": 0.9, "height": 2.0, "depth": 0.6}}]}
+        """#)
+        XCTAssertNil(s.threeDgsUri)
+        XCTAssertEqual(s.pointsUri, "/files/s1/points.ply")
+        XCTAssertEqual(s.meshUri, "/files/s1/room.glb")
+        XCTAssertEqual(s.objects.map(\.objectId), ["3", "4"])
+        XCTAssertEqual(s.objects.first?.modelUri, "/files/s1/objects/3.glb")
+
+        let rs = try decode(RoomState.self, #"""
+        {"roomStateId": 12, "listingId": 7, "status": "READY", "pointsUri": "/files/rs12/points.ply",
+         "removedObjectIds": [3],
+         "remainingObjects": [{"objectId": 4, "category": "storage", "position": {"x": -1, "y": -0.3, "z": -2.6},
+                               "rotation": {"yaw": 90}, "dimensions": {"width": 0.9, "height": 2.0, "depth": 0.6}}]}
+        """#)
+        XCTAssertTrue(rs.isReady)
+        XCTAssertEqual(rs.pointsUri, "/files/rs12/points.ply")
+        XCTAssertEqual(rs.removedObjectIds, ["3"])
+        let movein = Room(space: s).applying(rs)
+        XCTAssertTrue(movein.isMoveIn)
+        XCTAssertEqual(movein.objects.map(\.objectId), ["4"])         // 남은 가구만 충돌 판정에 들어간다
+
+        // 뷰어가 방 메시를 못 읽으면 meshFailed 를 보낸다 (앱이 점구름으로 다시 연다)
+        guard case .meshFailed(let message)? = ViewerEvent(["type": "meshFailed", "message": "out of memory"]) else {
+            return XCTFail("meshFailed 를 읽지 못함")
+        }
+        XCTAssertEqual(message, "out of memory")
+    }
+
     func testStayViewFieldNamesDecode() throws {
         let l = try decode(Listing.self, #"""
         {"spaceId": 3, "address": "서울 동작구 상도동", "deposit": 1000, "monthlyRent": 54, "maintenanceFee": 6,
@@ -115,6 +184,64 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertEqual(APIError(status: 400, body: #"{"message": "주소를 입력해 주세요"}"#).serverMessage, "주소를 입력해 주세요")
         XCTAssertNil(APIError(status: 500, body: "Internal Server Error").serverMessage)
         XCTAssertTrue(APIError(status: 404, body: "").isMissingEndpoint)
+    }
+
+    /// 둘러방 서버의 오류 응답(problem+json): "code" 와 "detail" 에 같은 코드가 온다
+    private func problem(_ code: String, _ status: Int) -> APIError {
+        APIError(status: status, body: #"{"type":"urn:dulleobang:problem:x","title":"Error","status":\#(status),"detail":"\#(code)","instance":"/api/x","code":"\#(code)","requestId":"r1","errors":[]}"#)
+    }
+
+    func testServerCodeIsNotShownAsMessage() {
+        let e = problem("INVALID_CREDENTIALS", 401)
+        XCTAssertEqual(e.serverCode, "INVALID_CREDENTIALS")
+        XCTAssertNil(e.serverMessage)                                   // 코드는 사람이 읽을 문구가 아니다
+        XCTAssertEqual(e.displayMessage, "이메일 또는 비밀번호가 맞지 않습니다.")
+        XCTAssertEqual((e as Error).userMessage, e.displayMessage)
+        XCTAssertTrue(APIError.looksLikeCode("RESOURCE_NOT_FOUND"))
+        XCTAssertFalse(APIError.looksLikeCode("Not Found"))
+        XCTAssertFalse(APIError.looksLikeCode("주소를 입력해 주세요"))
+        XCTAssertFalse(APIError.looksLikeCode("OK"))
+        // 예전 서버처럼 문구를 보내면 그대로 보여 준다
+        XCTAssertNil(APIError(status: 400, body: #"{"message": "주소를 입력해 주세요"}"#).serverCode)
+        XCTAssertEqual(APIError(status: 400, body: #"{"message": "주소를 입력해 주세요"}"#).displayMessage, "주소를 입력해 주세요 (400)")
+    }
+
+    func testServerErrorMessages() {
+        // 앱 · 서버 쪽 문제는 코드를 붙여 보여 준다
+        XCTAssertTrue(problem("INTERNAL_ERROR", 500).displayMessage.hasSuffix("(INTERNAL_ERROR)"))
+        XCTAssertTrue(problem("INVALID_CAPTURE_ZIP", 422).displayMessage.hasPrefix("촬영 파일을"))
+        // 모르는 코드는 상태 번호로 고른 문구 + 코드
+        XCTAssertEqual(problem("SOME_NEW_CODE", 429).displayMessage, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요. (SOME_NEW_CODE · 429)")
+        // 코드도 문구도 없는 응답
+        XCTAssertEqual(APIError(status: 503, body: "<html>").displayMessage, "서버에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요. (503)")
+        XCTAssertEqual(APIError(status: 404, body: "").displayMessage, "요청한 정보를 찾을 수 없습니다. (404)")
+        // 두 표에 같은 코드가 있으면 안 된다
+        XCTAssertTrue(Set(ServerErrorText.forUser.keys).isDisjoint(with: Set(ServerErrorText.toReport.keys)))
+        for (code, text) in ServerErrorText.forUser.merging(ServerErrorText.toReport, uniquingKeysWith: { a, _ in a }) {
+            XCTAssertTrue(APIError.looksLikeCode(code), code)
+            XCTAssertFalse(text.isEmpty, code)
+        }
+    }
+
+    func testValidationHintReplacesGenericMessage() {
+        let hint = "메시지는 1000자까지 보낼 수 있습니다."
+        XCTAssertEqual((problem("VALIDATION_FAILED", 422) as Error).validationAwareMessage(hint: hint), hint)
+        XCTAssertEqual((problem("EMPTY_MESSAGE", 422) as Error).validationAwareMessage(hint: hint), "메시지 내용을 입력해 주세요.")
+    }
+
+    func testJobFailureMessage() throws {
+        let failed = try decode(AIJob.self, #"{"jobId": "j1", "status": "FAILED", "progress": 40, "message": "AI worker lease expired.", "error": {"code": "WORKER_TIMEOUT", "message": "AI worker lease expired.", "retryable": true}}"#)
+        XCTAssertTrue(failed.isFailed)
+        XCTAssertEqual(failed.failureMessage, ServerErrorText.jobFailure["WORKER_TIMEOUT"])
+        // 모르는 원인 코드 · 원인이 없는 응답은 서버가 보낸 message 그대로
+        let unknown = try decode(AIJob.self, #"{"jobId": "j2", "status": "FAILED", "message": "실패", "error": {"code": "NEW_REASON", "message": "x", "retryable": false}}"#)
+        XCTAssertEqual(unknown.failureMessage, "실패")
+        let running = try decode(AIJob.self, #"{"jobId": 3, "status": "RUNNING", "progress": 10, "error": null}"#)
+        XCTAssertNil(running.error)
+        XCTAssertNil(running.failureMessage)
+        // error 가 문자열로 와도 작업 상태를 읽는다
+        let text = try decode(AIJob.self, #"{"jobId": "j4", "status": "FAILED", "error": "실패했습니다"}"#)
+        XCTAssertEqual(text.error?.message, "실패했습니다")
     }
 }
 
@@ -235,6 +362,8 @@ final class MockBackendTests: XCTestCase {
         let room = Room(space: space)
         XCTAssertEqual(room.walls.count, 4)
         XCTAssertEqual(space.spaceVersion, 1)
+        XCTAssertEqual(space.glass.count, room.windows.count, "데모 공간은 창마다 서버가 찾은 유리가 있다 (seed 3)")
+        XCTAssertEqual(room.glass.count, space.glass.count)
         let mine = try await list(backend, "listings/101/room-states", of: RoomState.self)
         let rsId = try XCTUnwrap(mine.first?.roomStateId)
         let rs: RoomState = try await call(backend, "GET", "room-states/\(rsId)")
@@ -500,5 +629,145 @@ final class MockBackendTests: XCTestCase {
         XCTAssertEqual(Fmt.withAnd("책상"), "책상과")
         XCTAssertEqual(Fmt.withAnd("TV"), "TV와")
         XCTAssertEqual(Fmt.objectLabel("washerDryer"), "세탁기")
+    }
+}
+
+/// 앱 화면 개선: 카드 · 상세 문구, 빠른 필터(3D만), 채팅 날짜 구분 · 시각, 매물 등록 단계 확인
+final class AppScreenTests: XCTestCase {
+    private func listing(location: String = "서울 동작구 흑석동 중앙하이츠 402호", fee: Int? = 7, area: Double? = 23.06,
+                         floor: Int? = 4, status: String? = nil) -> Listing {
+        var l = Listing(listingId: "1", location: location, price: Price(deposit: 1000, monthly: 57), dealType: "MONTHLY",
+                        maintenanceFee: fee, roomType: "ONE_ROOM", floor: floor, totalFloors: 5, area: area)
+        if let status { l.space3DInfo = Space3DInfo(status: status) }
+        return l
+    }
+
+    func testPyeongAndAreaShort() {
+        XCTAssertEqual(Fmt.pyeong(23.06), "7평")
+        XCTAssertEqual(Fmt.pyeong(21.54), "6.5평")
+        XCTAssertEqual(Fmt.pyeong(34.82), "10.5평")
+        XCTAssertEqual(Fmt.areaShort(23.06), "23.1㎡ · 7평")
+    }
+
+    func testCardLines() {
+        let l = listing()
+        XCTAssertEqual(Fmt.cardFacts(l), "원룸 · 7평 · 4층")
+        XCTAssertEqual(Fmt.cardSub(l), "관리비 7만 · 흑석동")
+        XCTAssertEqual(Fmt.feeShort(l), "7만 원")
+        let bare = listing(location: "", fee: nil, area: nil, floor: nil)
+        XCTAssertEqual(Fmt.cardFacts(bare), "원룸")
+        XCTAssertEqual(Fmt.cardSub(bare), "관리비 협의")
+        XCTAssertEqual(Fmt.feeShort(bare), "협의")
+        XCTAssertEqual(Fmt.cardSub(listing(fee: 0)), "관리비 없음 · 흑석동")
+    }
+
+    func testDong() {
+        XCTAssertEqual(Fmt.dong("서울 동작구 흑석동 중앙하이츠 402호"), "흑석동")
+        XCTAssertEqual(Fmt.dong("서울 동작구 상도동 123-4, 302호"), "상도동")
+        XCTAssertEqual(Fmt.dong("서울 영등포구"), "영등포구")
+        XCTAssertEqual(Fmt.dong(""), "")
+    }
+
+    func testOptionIcons() {
+        for o in Fmt.options { XCTAssertNotEqual(Fmt.optionIcon(o.key), "checkmark.circle", o.key) }
+        XCTAssertEqual(Fmt.optionIcon("sauna"), "checkmark.circle")
+    }
+
+    func testSpaceOnlyFilter() {
+        var q = ListingQuery()
+        XCTAssertFalse(q.isFiltered)
+        q.spaceOnly = true
+        XCTAssertTrue(q.isFiltered)
+        XCTAssertFalse(q.hasPriceLimit, "빠른 칩은 필터 버튼을 켜지 않는다")
+        XCTAssertTrue(q.matches(listing(status: "COMPLETED")))
+        XCTAssertFalse(q.matches(listing(status: "RUNNING")))
+        XCTAssertFalse(q.matches(listing()))
+        XCTAssertFalse(q.items.contains { $0.name.lowercased().contains("space") }, "서버에는 보내지 않고 받은 목록에서 거른다")
+        q.maxDeposit = 1000
+        XCTAssertTrue(q.hasPriceLimit)
+    }
+
+    func testChatTimelineDaysAndTimes() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let now = ISO8601DateFormatter().date(from: "2026-10-28T01:00:00Z")!     // 10월 28일 오전 10시 (한국)
+        func msg(_ id: String, _ who: String, _ at: String) -> ChatMessage {
+            ChatMessage(messageId: id, senderId: who, senderName: nil, message: id, sentAt: at)
+        }
+        let items = ChatTimeline.items([
+            msg("a", "agent", "2026-10-26T06:12:00Z"),     // 월요일 오후 3:12
+            msg("b", "me", "2026-10-26T06:32:10Z"),
+            msg("c", "me", "2026-10-26T06:32:40Z"),        // 같은 사람 · 같은 분 → b 에는 시각을 붙이지 않는다
+            msg("d", "agent", "2026-10-28T00:28:00Z"),     // 오늘 오전 9:28
+        ], now: now, calendar: cal)
+        XCTAssertEqual(items.count, 6)
+        XCTAssertEqual(items[0], .day("10월 26일 (월)"))
+        XCTAssertEqual(items[1], .message(msg("a", "agent", "2026-10-26T06:12:00Z"), time: "오후 3:12"))
+        if case .message(_, let t) = items[2] { XCTAssertNil(t) } else { XCTFail("b") }
+        if case .message(_, let t) = items[3] { XCTAssertEqual(t, "오후 3:32") } else { XCTFail("c") }
+        XCTAssertEqual(items[4], .day("오늘"))
+        if case .message(_, let t) = items[5] { XCTAssertEqual(t, "오전 9:28") } else { XCTFail("d") }
+    }
+
+    func testRegisterStepsCheckOnlyRequiredFields() {
+        typealias V = ListingRegisterView
+        XCTAssertEqual(V.Step.allCases.count, 5)
+        XCTAssertNotNil(V.problem(for: .basics, address: "  ", dealType: "MONTHLY", deposit: "", monthly: "", area: ""))
+        XCTAssertNil(V.problem(for: .basics, address: "서울 동작구 상도동", dealType: "MONTHLY", deposit: "", monthly: "", area: ""))
+        XCTAssertNotNil(V.problem(for: .price, address: "", dealType: "MONTHLY", deposit: "500", monthly: "", area: ""))
+        XCTAssertNil(V.problem(for: .price, address: "", dealType: "JEONSE", deposit: "25000", monthly: "", area: ""))
+        XCTAssertNotNil(V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "0"))
+        XCTAssertNil(V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "23.5"))
+        // 둘러방 서버는 사진이 있어야 매물을 공개한다
+        XCTAssertNotNil(V.problem(for: .media, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: ""))
+        XCTAssertNil(V.problem(for: .media, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: "", photoCount: 1))
+    }
+
+    /// 서버가 거절하는 값(422)은 다음 단계로 넘어가기 전에 막는다
+    func testRegisterStepsFollowServerLimits() {
+        typealias V = ListingRegisterView
+        func price(_ deal: String, _ dep: String, _ mon: String, fee: String = "") -> String? {
+            V.problem(for: .price, address: "", dealType: deal, deposit: dep, monthly: mon, area: "", fee: fee)
+        }
+        XCTAssertNotNil(price("MONTHLY", "500", "0"), "월세 0 은 서버가 거절")
+        XCTAssertNil(price("MONTHLY", "500", "1"))
+        XCTAssertNotNil(price("MONTHLY", "-1", "30"))
+        XCTAssertNotNil(price("MONTHLY", "500", "30", fee: "-5"))
+        XCTAssertNotNil(price("MONTHLY", "500", "30", fee: "5만"))
+        XCTAssertNil(price("JEONSE", "25000", "", fee: "10"))
+        func room(_ area: String, supply: String = "", factor: Double = 1, floor: String = "", total: String = "",
+                  rooms: String = "1", baths: String = "1") -> String? {
+            V.problem(for: .room, address: "", dealType: "MONTHLY", deposit: "", monthly: "", area: area, supply: supply,
+                      areaFactor: factor, floor: floor, totalFloors: total, rooms: rooms, baths: baths)
+        }
+        XCTAssertNil(room("23.5", supply: "30", floor: "3", total: "5"))
+        XCTAssertNotNil(room("23.5", supply: "20"), "공급면적 < 전용면적")
+        XCTAssertNotNil(room("23.5", floor: "6", total: "5"), "해당층 > 건물층")
+        XCTAssertNil(room("23.5", floor: "-1", total: "5"), "지하층")
+        XCTAssertNotNil(room("23.5", total: "0"))
+        XCTAssertNotNil(room("23.5", rooms: "0"))
+        XCTAssertNotNil(room("23.5", baths: "31"))
+        XCTAssertNotNil(room("0.02"), "0.1 m² 미만")
+        XCTAssertNil(room("7", factor: 3.3058), "7평")
+        XCTAssertNotNil(V.problem(for: .basics, address: String(repeating: "가", count: 201), dealType: "MONTHLY",
+                                  deposit: "", monthly: "", area: ""))
+    }
+
+    /// 둘러방 서버의 404 RESOURCE_NOT_FOUND 는 "API 가 없음" 이 아니라 "대상이 없음"
+    func testMissingEndpointReading() {
+        XCTAssertTrue(APIError(status: 404, body: "").isMissingEndpoint)
+        XCTAssertTrue(APIError(status: 501, body: "").isMissingEndpoint)
+        XCTAssertFalse(APIError(status: 404, body: #"{"status":404,"detail":"RESOURCE_NOT_FOUND","code":"RESOURCE_NOT_FOUND"}"#).isMissingEndpoint)
+    }
+}
+
+/// 서버 주소를 따로 넣지 않으면 팀 GCP 서버로 간다 (기기에 저장해 둔 주소는 테스트 뒤 되돌림)
+final class ServerConfigTests: XCTestCase {
+    func testDefaultServerIsTeamBackend() {
+        let saved = UserDefaults.standard.string(forKey: "baseURL")
+        UserDefaults.standard.removeObject(forKey: "baseURL")
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: "baseURL") } }
+        XCTAssertEqual(AppConfig.shared.baseURL.absoluteString, "http://34.47.87.3:8080/api")
+        XCTAssertEqual(AssetURL.resolve("/files/a.ply")?.absoluteString, "http://34.47.87.3:8080/files/a.ply")
     }
 }

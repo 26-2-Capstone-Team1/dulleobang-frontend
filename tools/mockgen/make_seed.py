@@ -9,7 +9,8 @@ import json, os, random, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 OUT_DIR = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "Dulleobang", "Resources", "Mock")
-SEED_VERSION = 2          # 2: 입주 상태가 사용자별(createdBy · status), 매물에 latestRoomStateId 없음
+SEED_VERSION = 3          # 2: 입주 상태가 사용자별(createdBy · status), 매물에 latestRoomStateId 없음
+                          # 3: 공간에 glass(서버가 LiDAR 로 찾은 투명 유리) 추가
 FRONT = -1.0          # 사진 좌표에서 앞벽(현관 쪽) 위치. 카메라는 z = -0.9 에서 뒷벽을 본다
 H = 2.4               # 층고
 
@@ -95,6 +96,12 @@ def space_for(lid, idx, unclassified=None):
     else:
         doors.append(opening(f"{lid}-door", "door", R - 0.55, 1.05, -FRONT, 0, 0.9, 2.1))
 
+    # 서버(tools/capture/glass_tools.py)가 LiDAR 로 찾는 투명 유리. 데모에서는 창마다 맑은 유리가 있다고 본다
+    glass = [{"objectId": f"{lid}-glass-{k + 1}", "category": "glass", "glassKind": "window",
+              "position": dict(w["position"]), "rotation": dict(w["rotation"]),
+              "dimensions": {"width": w["dimensions"]["width"], "height": w["dimensions"]["height"], "depth": 0.01}}
+             for k, w in enumerate(windows)]
+
     zb, zf = -rd, -FRONT
     walls = [
         {"id": f"{lid}-wall-back", "from": [r(L), r(zb)], "to": [r(R), r(zb)], "height": H},
@@ -114,6 +121,7 @@ def space_for(lid, idx, unclassified=None):
         },
         "roomDimensions": {"width": rw, "depth": r(depth), "height": H, "area": r(rw * depth)},
         "objects": objects,
+        "glass": glass,
     }
     return space, rw * depth
 

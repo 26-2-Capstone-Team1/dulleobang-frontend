@@ -161,6 +161,7 @@ struct EmailAuthSheet: View {
     @State private var error: String?
 
     static let passwordRange = 12...128
+    static let nameRange = 1...40           // 서버 SignupRequest.displayName
 
     private var emailOK: Bool { let e = email.trimmed; return e.contains("@") && e.contains(".") }
     private var passwordOK: Bool { Self.passwordRange.contains(password.count) }
@@ -168,7 +169,7 @@ struct EmailAuthSheet: View {
         guard emailOK, !busy else { return false }
         switch mode {
         case .login: return !password.isEmpty
-        case .signup: return passwordOK && password == passwordAgain && !name.trimmed.isEmpty && terms && privacy
+        case .signup: return passwordOK && password == passwordAgain && Self.nameRange.contains(name.trimmed.count) && terms && privacy
         }
     }
 
@@ -243,7 +244,9 @@ struct EmailAuthSheet: View {
             self.error = "이미 가입된 이메일입니다. 로그인해 주세요."
             mode = .login
         } catch {
-            self.error = error.userMessage
+            self.error = error.validationAwareMessage(hint: mode == .signup
+                ? "이메일 형식을 확인해 주세요. 비밀번호는 12~128자, 이름은 40자까지 쓸 수 있습니다."
+                : "이메일 형식과 비밀번호를 확인해 주세요.")
         }
     }
 }
@@ -266,21 +269,21 @@ struct DBSecureField: View {
     }
 }
 
-/// 보라 집 + 3D 큐브 배지
+/// 초록 집 + 3D 큐브 배지
 struct HouseIllustration: View {
     var body: some View {
         GeometryReader { geo in
             let s = min(geo.size.width, geo.size.height)
             ZStack {
-                Circle().fill(DB.purpleSoft)
+                Circle().fill(DB.accentSoft)
                 Image(systemName: "house.fill")
                     .resizable()
                     .scaledToFit()
                     .frame(width: s * 0.5, height: s * 0.5)
-                    .foregroundStyle(DB.purple)
+                    .foregroundStyle(DB.accent)
                 Image(systemName: "cube.transparent")
                     .font(.system(size: s * 0.16, weight: .semibold))
-                    .foregroundStyle(DB.purple)
+                    .foregroundStyle(DB.accent)
                     .padding(s * 0.06)
                     .background(Color.white, in: Circle())
                     .shadow(color: Color.black.opacity(0.12), radius: 6, y: 3)

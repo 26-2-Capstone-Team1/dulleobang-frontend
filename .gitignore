@@ -3,3 +3,4 @@ xcuserdata/
 DerivedData/
 .DS_Store
 Dulleobang/Info.plist
+__pycache__/

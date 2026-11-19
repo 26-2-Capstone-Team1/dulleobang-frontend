@@ -1,12 +1,16 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// 설정: 서버 주소 · 로그인 정보 · 개발용 중개사 모드 · 촬영 옵션 · 오프라인 촬영(capture.zip) · 저장 공간
+/// 설정: 서버 주소 · 로그인 정보 · 개발용 중개사 모드 · 촬영 옵션 · 오프라인 촬영(capture.zip) · 3D 파일 열어 보기 · 저장 공간
 /// 로그인 화면(⚙︎)과 마이페이지(⚙︎) 양쪽에서 연다.
 struct DeveloperSettingsView: View {
     @EnvironmentObject private var session: Session
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("baseURL") private var baseURL = "http://localhost:8080/api"
+    @AppStorage("baseURL") private var baseURL = AppConfig.defaultBaseURL
     @AppStorage("useRoomPlan") private var useRoomPlan = true
+    @AppStorage("lockFocus") private var lockFocus = true
+    @AppStorage("autoTorch") private var autoTorch = true
+    @AppStorage("capShutter") private var capShutter = true
     @AppStorage(AppConfig.useMockDataKey) private var useMockData = AppConfig.useMockDataDefault
     @State private var offline: CaptureKind?
     @State private var cacheMB = AssetCache.sizeMB
@@ -14,6 +18,9 @@ struct DeveloperSettingsView: View {
     @State private var demoSummary = ""
     @State private var confirmReset = false
     @State private var resetting = false
+    @State private var pickingModel = false             // 3D 파일 고르기 (파일 앱)
+    @State private var preview: MeshPreviewItem?
+    @State private var importError: String?
 
     var body: some View {
         Form {
@@ -44,12 +51,15 @@ struct DeveloperSettingsView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                if baseURL != AppConfig.defaultBaseURL {
+                    Button("기본 서버로 (팀 GCP 서버)") { baseURL = AppConfig.defaultBaseURL }
+                }
             } header: {
                 Text("백엔드 서버")
             } footer: {
                 Text(useMockData
                      ? "데모 모드에서는 쓰지 않습니다."
-                     : "같은 Wi-Fi 의 노트북에서 서버를 돌린다면 노트북 IP 를 넣으세요. localhost 는 휴대폰 자신을 뜻합니다.")
+                     : "기본은 팀 GCP 서버예요. 같은 Wi-Fi 의 노트북에서 서버를 돌린다면 노트북 IP 를 넣으세요. localhost 는 휴대폰 자신을 뜻합니다.")
             }
             .disabled(useMockData)
 
@@ -70,6 +80,9 @@ struct DeveloperSettingsView: View {
             Section {
                 Toggle("RoomPlan 으로 벽·문·창 함께 스캔", isOn: $useRoomPlan)
                     .disabled(!RoomPlanController.isSupported)
+                Toggle("촬영 중 초점 고정 (끄면 계속 자동 초점)", isOn: $lockFocus)
+                Toggle("어두우면 손전등 자동으로 켜기", isOn: $autoTorch)
+                Toggle("셔터를 1/120초보다 길게 열지 않기 (흔들림 줄이기)", isOn: $capShutter)
                 Button { offline = .room } label: { Label("오프라인 방 촬영 → capture.zip", systemImage: "camera.viewfinder") }
                 Button { offline = .furniture } label: { Label("오프라인 가구 촬영 → capture.zip", systemImage: "sofa") }
             } header: {
@@ -78,6 +91,16 @@ struct DeveloperSettingsView: View {
                 Text(RoomPlanController.isSupported
                      ? "LiDAR 기기입니다. 깊이(depth)와 RoomPlan 구조가 함께 저장됩니다.\n오프라인 촬영은 서버 없이 zip 을 만들어 AirDrop 으로 AI 팀원에게 보낼 때 씁니다."
                      : "LiDAR 가 없는 기기입니다. 사진 + 카메라 포즈만 저장됩니다.")
+            }
+
+            Section {
+                Button { pickingModel = true } label: {
+                    Label("3D 파일 열어 보기 (.glb · .ply · .obj)", systemImage: "cube.transparent")
+                }
+            } header: {
+                Text("3D 뷰어 시험")
+            } footer: {
+                Text("AI 팀이 만든 방 메시(room.glb)를 서버 없이 이 앱의 뷰어로 열어 봅니다. 파일 앱이나 AirDrop 으로 받은 파일을 고르세요.")
             }
 
             Section("저장 공간") {
@@ -127,6 +150,32 @@ struct DeveloperSettingsView: View {
         }
         .fullScreenCover(item: $offline) { kind in
             CaptureFlowView(target: .localOnly(kind))
+        }
+        .fileImporter(isPresented: $pickingModel, allowedContentTypes: [.data]) { result in
+            switch result {
+            case .success(let url): openModel(url)
+            case .failure(let e): importError = e.localizedDescription
+            }
+        }
+        .fullScreenCover(item: $preview, onDismiss: { cacheMB = AssetCache.sizeMB }) { item in
+            MeshPreviewView(item: item)
+        }
+        .errorAlert($importError)
+    }
+
+    /// 고른 파일을 앱 안(3D 캐시)으로 복사한 뒤 뷰어로 연다. 파일 앱의 파일은 허락을 받은 동안만 읽을 수 있고,
+    /// 큰 파일(수백 MB)은 복사에 시간이 걸리므로 화면을 막지 않게 뒤에서 복사한다
+    private func openModel(_ url: URL) {
+        Task {
+            let scoped = url.startAccessingSecurityScopedResource()
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try AssetCache.importLocal(url) }
+            }.value
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            switch result {
+            case .success(let viewerURL): preview = MeshPreviewItem(name: url.lastPathComponent, viewerURL: viewerURL)
+            case .failure(let e): importError = "파일을 읽지 못했습니다: \(e.localizedDescription)"
+            }
         }
     }
 

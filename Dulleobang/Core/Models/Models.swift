@@ -20,13 +20,40 @@ struct Rotation: Codable, Hashable { var yaw: Double }
 
 struct BoundingBox: Codable, Hashable { var min: Vec3; var max: Vec3 }
 
+/// 실패한 AI 작업의 원인 (서버 JobFailure)
+struct JobFailure: Codable {
+    var code: String?
+    var message: String?
+    var retryable: Bool?
+
+    private enum CodingKeys: String, CodingKey { case code, message, retryable }
+
+    /// 객체 {code, message, retryable} 가 기본. 문구만 문자열로 주는 서버도 받고, 다른 형태면 비워 둔다 (작업 상태 조회가 깨지지 않게)
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(), let text = try? single.decode(String.self) {
+            message = text
+            return
+        }
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        code = try? c.decodeIfPresent(String.self, forKey: .code)
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+        retryable = try? c.decodeIfPresent(Bool.self, forKey: .retryable)
+    }
+}
+
 struct AIJob: Codable {
     @FlexibleID var jobId: String
     var status: String                 // QUEUED | RUNNING | RETRY_WAIT | COMPLETED | FAILED | CANCELED
     var progress: Double?              // 0–100
     var message: String?
     @FlexibleOptionalID var roomStateId: String? = nil     // ROOM_OBJECT_REMOVAL 완료 시
+    var error: JobFailure? = nil       // 실패 원인 {code, message, retryable}
     var isDone: Bool { status == "COMPLETED" }
+    /// 실패했을 때 보여 줄 문구: 아는 원인 코드는 한국어로, 아니면 서버가 보낸 message
+    var failureMessage: String? {
+        if let code = error?.code, let text = ServerErrorText.jobFailure[code] { return text }
+        return message
+    }
     /// 끝났지만 결과가 없는 상태 (취소도 여기에 넣어야 폴링이 멈춘다)
     var isFailed: Bool { status == "FAILED" || status == "CANCELED" }
     var percent: Int? { progress.map { Int($0.rounded()) } }
@@ -243,6 +270,9 @@ struct SceneObject: Codable, Identifiable {
     var dimensions: Dimensions
     var ownershipType: String?         // PERSONAL | RENTAL_OPTION | UNKNOWN (nil 도 미분류)
     var removable: Bool? = nil         // false = 구조물 · 고정 설비. 없으면 종류로 판단
+    /// 방 메시와 따로 온 이 가구의 GLB (AI 메시 파이프라인의 가구별 GLB). 미터 · Y-up, 원점 = 상자 중심.
+    /// 있으면 뷰어가 이 모델을 position · rotation.yaw 자리에 그리고, ‘가구 빼 보기’는 이 모델만 숨긴다
+    var modelUri: String? = nil
 
     var isPersonal: Bool { ownershipType == "PERSONAL" }
     var isRentalOption: Bool { ownershipType == "RENTAL_OPTION" }
@@ -253,6 +283,19 @@ struct SceneObject: Codable, Identifiable {
 
     /// RoomPlan 종류 중 빼는 게 말이 안 되는 고정 설비
     static let fixtureCategories: Set<String> = ["sink", "toilet", "bathtub", "fireplace", "stairs", "stove", "oven", "dishwasher"]
+    /// 서버가 objects 에 유리를 섞어 보낼 때의 종류. 가구가 아니므로 SpaceResponse.glass 로 옮긴다
+    static let glassCategory = "glass"
+}
+
+/// 서버(AI)가 LiDAR 로 찾은 투명 유리 하나 (tools/capture/glass_tools.py 가 만드는 glass.json 의 objects 와 같은 모양).
+/// LiDAR 레이저는 맑은 유리를 통과해서 스캔에는 유리가 비어 있다 → 뷰어가 이 자리에 반투명 유리 상자를 그린다
+struct GlassPane: Codable, Identifiable {
+    var id: String { objectId }
+    @FlexibleID var objectId: String
+    var glassKind: String? = nil       // window | door | wall(RoomPlan 은 벽이라고 한 유리벽) | gap(RoomPlan 이 벽을 못 찾은 자리)
+    var position: Vec3                 // 중심
+    var rotation: Rotation             // yaw: +Y 축 반시계(위에서 볼 때), 도. 폭(width)이 벽을 따라간다
+    var dimensions: Dimensions         // width(가로) height(세로) depth(두께, 보통 0.01)
 }
 
 struct SpaceResponse: Codable {
@@ -264,10 +307,24 @@ struct SpaceResponse: Codable {
     var collisionGeometryUri: String?  // glb
     var spaceVersion: Int? = nil       // 다시 촬영할 때마다 +1
     var objectsVersion: Int? = nil     // 중개사가 가구 구분을 바꿀 때마다 +1 (입주 상태 요청에 그대로 보낸다)
+    /// 서버가 LiDAR 로 찾은 투명 유리 (선택). 뷰어가 반투명 유리로 그리고, 가구 목록 · 가구 구분 · 충돌 판정에는 넣지 않는다
+    var glass: [GlassPane] = []
+    /// 방 메시: room.glb (또는 면이 있는 PLY · OBJ). AI 팀 메시 파이프라인(export_space.py)의 결과, ARKit 좌표 그대로.
+    /// 있으면 3dgsUri · pointsUri 보다 먼저 쓴다. 가구는 objects[].modelUri 로 따로 온다
+    var meshUri: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case threeDgsUri = "3dgsUri", pointsUri, roomGeometry, roomDimensions, objects, collisionGeometryUri
-        case spaceVersion, objectsVersion
+        case spaceVersion, objectsVersion, glass, meshUri
+    }
+}
+
+/// 장면 파일의 종류를 주소로 가늠한다
+enum SceneAsset {
+    /// 확장자가 .glb · .gltf · .obj 면 메시. PLY 는 메시 · 3DGS · 점이 모두 될 수 있어 뷰어가 파일 머리말을 보고 정한다
+    static func isMesh(_ uri: String) -> Bool {
+        let path = uri.split(whereSeparator: { $0 == "?" || $0 == "#" }).first.map(String.init) ?? uri
+        return ["glb", "gltf", "obj"].contains((path as NSString).pathExtension.lowercased())
     }
 }
 
@@ -277,12 +334,19 @@ extension SpaceResponse {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threeDgsUri = try c.decodeIfPresent(String.self, forKey: .threeDgsUri)
         pointsUri = try c.decodeIfPresent(String.self, forKey: .pointsUri)
+        meshUri = (try? LooseContainer(decoder))?.string("meshUri", "meshUrl", "roomMeshUri", "roomUri")
         roomGeometry = try c.decodeIfPresent(RoomGeometry.self, forKey: .roomGeometry)
         roomDimensions = try c.decodeIfPresent(RoomDimensions.self, forKey: .roomDimensions)
-        objects = try c.decodeIfPresent([SceneObject].self, forKey: .objects) ?? []
+        let all = try c.decodeIfPresent([SceneObject].self, forKey: .objects) ?? []
+        objects = all.filter { $0.category != SceneObject.glassCategory }
         collisionGeometryUri = try c.decodeIfPresent(String.self, forKey: .collisionGeometryUri)
         spaceVersion = try? c.decodeIfPresent(Int.self, forKey: .spaceVersion)
         objectsVersion = try? c.decodeIfPresent(Int.self, forKey: .objectsVersion)
+        // 유리는 보여 주기용이라 잘못 와도 공간 전체를 못 여는 일은 없게 한다. objects 에 category "glass" 로 섞여 와도 유리로 옮긴다
+        let separate = (try? c.decodeIfPresent([GlassPane].self, forKey: .glass)) ?? []
+        glass = separate + all.filter { $0.category == SceneObject.glassCategory }.map {
+            GlassPane(objectId: $0.objectId, glassKind: nil, position: $0.position, rotation: $0.rotation, dimensions: $0.dimensions)
+        }
     }
 }
 
@@ -490,6 +554,8 @@ struct ChatRoomDetail: Codable {
     var counterpartName: String?
     var officeName: String?
     var messages: [ChatMessage]?
+    /// 매물이 내려가 더 이상 보낼 수 없는 채팅 (서버가 알려 줌)
+    var readOnly: Bool? = nil
 }
 
 struct OpenChatRequest: Codable { var listingId: String }

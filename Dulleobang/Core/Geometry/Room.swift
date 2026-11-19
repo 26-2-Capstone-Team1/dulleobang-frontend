@@ -10,8 +10,12 @@ struct Room {
     var doors: [Opening]
     var windows: [Opening]
     var objects: [SceneObject]
+    /// 서버가 찾은 투명 유리 (SpaceResponse.glass). 뷰어가 그리기만 하고 충돌 판정에는 쓰지 않는다
+    var glass: [GlassPane] = []
     /// 입주 상태(내가 가구를 뺀 공간)인가. 이때 남아 있는 가구는 개인 가구라도 그대로 남는 것이므로 충돌에 넣는다
     var isMoveIn = false
+    /// 서버가 방 구조(벽 또는 범위 상자)를 줬는가. false 면 범위가 임시값이라, 뷰어가 방 메시 크기로 잡아 알려 준다
+    var hasGeometry = false
 
     var width: Double { bboxMax.x - bboxMin.x }
     var depth: Double { bboxMax.z - bboxMin.z }
@@ -19,6 +23,7 @@ struct Room {
 
     init(space: SpaceResponse) {
         self.init(geometry: space.roomGeometry, dimensions: space.roomDimensions, objects: space.objects)
+        glass = space.glass
     }
 
     /// 입주 상태: 제거된 객체를 뺀 목록으로 교체
@@ -55,5 +60,6 @@ struct Room {
         } else {
             bboxMin = Vec3(x: -2, y: floorY, z: -2); bboxMax = Vec3(x: 2, y: ceilingY, z: 2)
         }
+        hasGeometry = g?.boundingBox != nil || !walls.isEmpty
     }
 }

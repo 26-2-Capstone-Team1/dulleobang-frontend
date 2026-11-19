@@ -1,5 +1,5 @@
 {
- "seedVersion": 2,
+ "seedVersion": 3,
  "agents": [
   {
    "userId": "9001",
@@ -751,6 +751,26 @@
      "ownershipType": "RENTAL_OPTION"
     }
    ],
+   "glass": [
+    {
+     "objectId": "101-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": 0.0,
+      "y": 1.5,
+      "z": -4.2
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.4,
+      "height": 1.1,
+      "depth": 0.01
+     }
+    }
+   ],
    "spaceVersion": 1,
    "objectsVersion": 1
   },
@@ -937,6 +957,26 @@
       "depth": 0.6
      },
      "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "glass": [
+    {
+     "objectId": "102-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": -1.9,
+      "y": 1.475,
+      "z": -2.25
+     },
+     "rotation": {
+      "yaw": 90
+     },
+     "dimensions": {
+      "width": 1.3,
+      "height": 1.05,
+      "depth": 0.01
+     }
     }
    ],
    "spaceVersion": 1,
@@ -1145,6 +1185,26 @@
      "ownershipType": null
     }
    ],
+   "glass": [
+    {
+     "objectId": "104-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": -1.9,
+      "y": 1.475,
+      "z": -2.25
+     },
+     "rotation": {
+      "yaw": 90
+     },
+     "dimensions": {
+      "width": 1.3,
+      "height": 1.05,
+      "depth": 0.01
+     }
+    }
+   ],
    "spaceVersion": 1,
    "objectsVersion": 1
   },
@@ -1313,6 +1373,26 @@
       "depth": 0.6
      },
      "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "glass": [
+    {
+     "objectId": "105-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": 0.0,
+      "y": 1.5,
+      "z": -4.2
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.4,
+      "height": 1.1,
+      "depth": 0.01
+     }
     }
    ],
    "spaceVersion": 1,
@@ -1539,6 +1619,26 @@
      "ownershipType": "RENTAL_OPTION"
     }
    ],
+   "glass": [
+    {
+     "objectId": "106-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": 0.0,
+      "y": 1.5,
+      "z": -3.8
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.4,
+      "height": 1.1,
+      "depth": 0.01
+     }
+    }
+   ],
    "spaceVersion": 1,
    "objectsVersion": 1
   },
@@ -1745,6 +1845,26 @@
      "ownershipType": "RENTAL_OPTION"
     }
    ],
+   "glass": [
+    {
+     "objectId": "108-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": 0.0,
+      "y": 1.5,
+      "z": -4.6
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.4,
+      "height": 1.1,
+      "depth": 0.01
+     }
+    }
+   ],
    "spaceVersion": 1,
    "objectsVersion": 1
   },
@@ -1913,6 +2033,26 @@
       "depth": 0.6
      },
      "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "glass": [
+    {
+     "objectId": "110-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": 0.0,
+      "y": 1.5,
+      "z": -4.2
+     },
+     "rotation": {
+      "yaw": 0
+     },
+     "dimensions": {
+      "width": 1.4,
+      "height": 1.1,
+      "depth": 0.01
+     }
     }
    ],
    "spaceVersion": 1,
@@ -2101,6 +2241,26 @@
       "depth": 0.6
      },
      "ownershipType": "RENTAL_OPTION"
+    }
+   ],
+   "glass": [
+    {
+     "objectId": "112-glass-1",
+     "category": "glass",
+     "glassKind": "window",
+     "position": {
+      "x": -1.9,
+      "y": 1.475,
+      "z": -2.25
+     },
+     "rotation": {
+      "yaw": 90
+     },
+     "dimensions": {
+      "width": 1.3,
+      "height": 1.05,
+      "depth": 0.01
+     }
     }
    ],
    "spaceVersion": 1,
