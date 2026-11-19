@@ -37,6 +37,8 @@ final class CaptureFlowModel: ObservableObject {
     }
 
     @Published var phase: Phase = .ready
+    /// 업로드 뒤 서버가 준 AI 작업 번호 (백엔드에 처리 상태를 물을 때 쓴다)
+    @Published private(set) var jobId: String?
     @Published var stats = CaptureStats()
     @Published var notice: String?
     /// 정지를 눌렀는데 제자리에서만 찍었거나 바닥 · 천장이 덜 찍혔을 때 확인 (더 찍기 / 그대로 끝내기)
@@ -314,6 +316,7 @@ final class CaptureFlowModel: ObservableObject {
     }
 
     private func waitJob(_ jobId: String) async throws {
+        self.jobId = jobId
         phase = .processing("업로드 완료 · AI 처리 대기 중")
         let job = try await JobAPI.wait(jobId) { [weak self] j in
             let pct = j.percent.map { " \($0)%" } ?? ""

@@ -216,12 +216,14 @@ struct CaptureFlowView: View {
                 Text(msg).multilineTextAlignment(.center)
                 Text("3D 생성에는 몇 분 이상 걸릴 수 있습니다.\n닫아도 서버에서 계속 처리됩니다.")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                jobIdLine
                 Button("닫기") { close() }.buttonStyle(.bordered)
             })
         case .done:
             content = AnyView(VStack(spacing: 12) {
                 Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundStyle(.green)
                 Text(model.kind == .room ? "3D 공간이 준비되었습니다" : "3D 가구가 준비되었습니다")
+                jobIdLine
                 Button("완료") { close() }.buttonStyle(.borderedProminent)
             })
         case .captured(let c):
@@ -251,6 +253,7 @@ struct CaptureFlowView: View {
             content = AnyView(VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).foregroundStyle(.orange)
                 Text(msg).multilineTextAlignment(.center)
+                jobIdLine
                 HStack {
                     if model.canRetryUpload { Button("업로드 재시도") { model.retryUpload() }.buttonStyle(.borderedProminent) }
                     Button("다시 촬영") { model.retry() }.buttonStyle(.bordered)
@@ -265,6 +268,18 @@ struct CaptureFlowView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
         )
+    }
+
+    /// 업로드 뒤 받은 AI 작업 번호 (길게 눌러 선택 · 복사 버튼). 백엔드에 처리 상태를 물을 때 쓴다
+    @ViewBuilder private var jobIdLine: some View {
+        if let id = model.jobId {
+            HStack(spacing: 6) {
+                Text("작업 번호 \(id)").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                Button { UIPasteboard.general.string = id } label: { Image(systemName: "doc.on.doc") }
+                    .font(.caption)
+                    .accessibilityLabel("작업 번호 복사")
+            }
+        }
     }
 
     private func close() {
