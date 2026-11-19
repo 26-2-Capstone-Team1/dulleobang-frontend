@@ -350,6 +350,53 @@ final class CaptureCoachTests: XCTestCase {
         XCTAssertEqual(c.alert, .floorMissing)
     }
 
+    // MARK: 낮은 자세
+
+    /// 높이 height 에서 정면(-z)을 보는 카메라
+    private func held(x: Float, height: Float) -> simd_float4x4 {
+        var m = matrix_identity_float4x4
+        m.columns.3 = SIMD4(x, height, 0, 1)
+        return m
+    }
+
+    /// 걸으면서(초당 30 cm) 1초에 걸쳐 높이를 바꾼 뒤 그 높이로 seconds 초
+    private func walkHeld(_ c: inout CaptureCoach, from t0: Double, to height: Float, seconds: Double) -> Double {
+        var t = t0
+        let startHeight = c.lastSampleTime == nil ? height : lastHeight
+        for i in 1...Int((1 + seconds) * 10) {
+            t += 0.1
+            let k = min(Float(i) / 10, 1)
+            lastHeight = startHeight + (height - startHeight) * k
+            c.update(.init(time: t, transform: held(x: Float(t) * 0.3, height: lastHeight), tracking: .normal,
+                           exposureS: 1.0 / 120, depthM: 2, textureScore: 20, directionsCovered: 0.5))
+        }
+        return t
+    }
+    private var lastHeight: Float = 1.4
+
+    func testLongLowPostureWarnsButShortDipDoesNot() {
+        var c = CaptureCoach(checksWalking: true)
+        var t = walkHeld(&c, from: 0, to: 1.4, seconds: 5)               // 서서 시작
+        t = walkHeld(&c, from: t, to: 0.8, seconds: 3)                   // 책상 밑을 잠깐 비춤
+        XCTAssertNotEqual(c.alert, .lowPosture, "잠깐 낮게 찍는 것은 괜찮다")
+        t = walkHeld(&c, from: t, to: 1.4, seconds: 3)
+        XCTAssertNil(c.alert)
+        t = walkHeld(&c, from: t, to: 0.8, seconds: 10)                  // 쪼그려 앉아 오래 찍음 (시작 높이보다 60 cm 낮음)
+        XCTAssertEqual(c.alert, .lowPosture)
+        t = walkHeld(&c, from: t, to: 1.4, seconds: 3)                   // 일어서면 내린다
+        XCTAssertNil(c.alert)
+    }
+
+    func testLowPostureUsesFloorHeightWhenKnown() {
+        var c = CaptureCoach(checksWalking: true)
+        XCTAssertFalse(c.isLow(1.0), "시작 높이도 바닥도 모르면 판단하지 않는다")
+        c.addSavedFrame(points: floorPoints(around: SIMD2(0, -2), radius: 1.0), samples: 768, camera: held(x: 0, height: 1.4))
+        c.addSavedFrame(points: floorPoints(around: SIMD2(0, -2), radius: 1.0), samples: 768, camera: held(x: 0, height: 1.4))
+        XCTAssertEqual(c.floorY ?? 99, 0, accuracy: 0.03)
+        XCTAssertTrue(c.isLow(0.8), "바닥에서 80 cm")
+        XCTAssertFalse(c.isLow(1.1), "바닥에서 1.1 m 는 선 자세")
+    }
+
     // MARK: 천장 (LiDAR)
 
     /// 천장(높이 y) 위 원판 모양 점들 (10 cm 간격). 카메라는 1.4 m 높이라 2.4 m 천장은 1 m 위
@@ -1234,7 +1281,7 @@ final class CaptureLogTests: XCTestCase {
         let room = PreScanChecklist.items(for: .room)
         XCTAssertEqual(room.count, 3, "찍는 사람에게는 두세 가지만 부탁한다")
         let text = room.map(\.text).joined(separator: " ")
-        for word in ["한 바퀴", "좁은 곳", "사람", "불"] { XCTAssertTrue(text.contains(word), word) }
+        for word in ["선 자세", "한 바퀴", "좁은 곳", "사람", "불"] { XCTAssertTrue(text.contains(word), word) }
         XCTAssertEqual(PreScanChecklist.items(for: .furniture).count, 3)
     }
 }

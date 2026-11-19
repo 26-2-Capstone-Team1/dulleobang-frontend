@@ -148,6 +148,7 @@ enum CaptureAlert: String, CaseIterable, Equatable {
     case featureless         // 무늬 없는 면(흰 벽 · 화이트보드)만 화면에 가득
     case tooClose            // 벽 · 물체에 너무 가까움
     case standingStill       // 제자리에서 돌리기만 함 (방 촬영)
+    case lowPosture          // 쪼그려 앉은 낮은 자세로 오래 찍음 (방 촬영). 낮은 사진은 벽 · 천장 밝기를 어긋나게 하고, 광택 바닥에 벽 색이 비친 얼룩을 만든다 (AI 팀 셔터 상한 A/B, 11.19)
     case floorMissing        // 첫 바퀴를 돌았는데 바닥 사진(LiDAR 로 확인)이 걸어온 길 대부분에서 없음 (방 촬영)
 
     var title: String {
@@ -158,6 +159,7 @@ enum CaptureAlert: String, CaseIterable, Equatable {
         case .featureless: return "무늬 없는 면만 보여요"
         case .tooClose: return "너무 가까워요"
         case .standingStill: return "제자리에서만 찍고 있어요"
+        case .lowPosture: return "낮은 자세로 오래 찍고 있어요"
         case .floorMissing: return "바닥이 거의 안 찍혔어요"
         }
     }
@@ -170,6 +172,7 @@ enum CaptureAlert: String, CaseIterable, Equatable {
         case .featureless: return "가구 · 문 · 모서리가 함께 보이게 조금 물러나 비춰 주세요"
         case .tooClose: return "한 걸음 물러나 넓게 비춰 주세요"
         case .standingStill: return "방을 따라 한 바퀴 걸으면서 찍어야 3D가 선명하게 나와요"
+        case .lowPosture: return "책상 밑은 잠깐만 비추고, 일어서서 찍어 주세요"
         case .floorMissing: return "폰을 아래로 30~45° 기울여 걸어온 길의 바닥이 화면 절반쯤 보이게 찍어 주세요"
         }
     }
@@ -182,6 +185,7 @@ enum CaptureAlert: String, CaseIterable, Equatable {
         case .featureless: return "square.dashed"
         case .tooClose: return "hand.raised.fill"
         case .standingStill: return "figure.walk"
+        case .lowPosture: return "figure.stand"
         case .floorMissing: return "arrow.down.to.line"
         }
     }
@@ -195,12 +199,13 @@ enum CaptureAlert: String, CaseIterable, Equatable {
         case .trackingLost: return 0.5
         case .tooDark, .tooFast: return 0.4
         case .featureless, .tooClose, .standingStill: return 1.0
+        case .lowPosture: return 8.0                       // 책상 밑을 잠깐 비추는 것은 괜찮다. 오래 낮게 찍을 때만
         case .floorMissing: return 6.0                     // 안내 문구를 보고 폰을 기울일 시간을 준다
         }
     }
 
     /// 조건이 사라지고 이만큼(초) 지나야 내린다
-    var offDelay: Double { self == .standingStill || self == .floorMissing ? 2.0 : 1.0 }
+    var offDelay: Double { self == .standingStill || self == .floorMissing || self == .lowPosture ? 2.0 : 1.0 }
 }
 
 /// 촬영 중 실시간 점검. CaptureRecorder 가 폴링(10 Hz)마다 update 를 부른다. ARKit 에 의존하지 않는 순수 로직이라 테스트 가능.
@@ -227,6 +232,8 @@ struct CaptureCoach {
         var turnHeavyMinDeg = 90.0       // 최근 창(stillWindowS)에서 이만큼 넘게 돌았는데
         var turnHeavyCmPerDeg = 0.5      // 1° 돌 때 이만큼(cm)도 안 움직였으면 '옆으로 걸으면 더 선명해요' 팁 (경고 아님. 10월 8일 촬영본 평균 0.96 · AI 팀 new1 0.8)
         var recentWalkM = 0.5            // 최근 창에서 이만큼 움직였으면 지금 걷는 중으로 본다
+        var lowAboveFloorM: Float = 0.95 // 카메라가 바닥에서 이보다 낮으면 낮은 자세 (서서 들면 보통 1.2~1.5 m)
+        var lowBelowStartM: Float = 0.35 // 바닥 높이를 아직 모를 때: 촬영을 시작한 높이보다 이만큼 낮으면 낮은 자세 (AI 팀 A/B 기준)
         var fallbackExposureS = 1.0 / 60 // 셔터 시간을 모를 때
         var fallbackDepthM = 2.0         // 깊이를 모를 때 (LiDAR 없는 기기)
         // 바닥 (LiDAR)
@@ -288,6 +295,7 @@ struct CaptureCoach {
     private(set) var lastSampleTime: Double?
 
     private var startTime: Double?
+    private var startY: Float?               // 추적이 처음 정상일 때의 카메라 높이 (서서 시작한다고 본다)
     private var last: (time: Double, transform: simd_float4x4)?
     private var box: (minX: Float, maxX: Float, minZ: Float, maxZ: Float)?
     private var exposureEMA = 0.0            // 셔터 시간(초), 평활 → tooFast 를 tooDark 로 보여 줄지
@@ -324,6 +332,7 @@ struct CaptureCoach {
     @discardableResult
     mutating func update(_ s: Sample) -> CaptureAlert? {
         if startTime == nil { startTime = s.time }
+        if startY == nil, s.tracking == .normal { startY = s.transform.columns.3.y }
         lastSampleTime = s.time
         if let e = s.exposureS, e > 0 { exposureEMA = exposureEMA == 0 ? e : 0.8 * exposureEMA + 0.2 * e }
         updateMotion(s)
@@ -446,12 +455,20 @@ struct CaptureCoach {
         }
         if let d = s.depthM, d < config.tooCloseM { c.insert(.tooClose) }
         if checksWalking, s.tracking == .normal, isStandingStill(at: s.time) { c.insert(.standingStill) }
+        if checksWalking, s.tracking == .normal, isLow(s.transform.columns.3.y) { c.insert(.lowPosture) }
         if checksWalking, s.tracking == .normal, !lookingDown, let floor = floorCoverage, floor < config.floorAlertBelow {
             let loopDone = s.directionsCovered >= 0.999 && spanM >= Double(config.loopSpanM)
             let late = startTime.map { s.time - $0 >= config.floorAfterS - Self.eps } ?? false
             if loopDone || late { c.insert(.floorMissing) }
         }
         return c
+    }
+
+    /// 낮은 자세인가: 바닥 높이를 알면 바닥에서 잰 카메라 높이로, 모르면 촬영을 시작한 높이와 비교한다
+    func isLow(_ cameraY: Float) -> Bool {
+        if let floor = floorY { return cameraY - floor < config.lowAboveFloorM }
+        if let start = startY { return cameraY < start - config.lowBelowStartM }
+        return false
     }
 
     // MARK: 바닥 (LiDAR)

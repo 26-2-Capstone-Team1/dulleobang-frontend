@@ -474,7 +474,7 @@ struct PreScanChecklist: View {
     static func items(for kind: CaptureKind) -> [Item] {
         switch kind {
         case .room:
-            return [Item(icon: "figure.walk", text: "방 전체를 천천히 한 바퀴 · 욕실 · 주방 같은 좁은 곳도 한 번씩 들어가기"),
+            return [Item(icon: "figure.walk", text: "선 자세로 방 전체를 천천히 한 바퀴 · 욕실 · 주방 같은 좁은 곳도 한 번씩 들어가기"),
                     Item(icon: "person.fill.xmark", text: "다른 사람은 화면 밖으로"),
                     Item(icon: "lightbulb.fill", text: "(가능하면) 불 켜기")]
         case .furniture:
