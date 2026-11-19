@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 로그인 (와이어프레임 첫 화면): 로고 · 집 일러스트 · "공간의 구조부터 분위기까지" · 카카오 / Google / 이메일로 시작하기
 /// 카카오 · 구글은 SDK 토큰을 서버가 검증한다(POST /auth/oauth/{provider}). SDK 는 앱 키가 필요해서,
-/// 데모 모드에서는 가입 시트(이름 · 이메일 + 약관 동의)로 대신한다. 이메일은 가입 · 로그인(비밀번호 12자 이상).
+/// 데모 모드에서는 가입 시트(이름 · 이메일 + 약관 동의)로 대신한다. 이메일 가입과 로그인을 지원한다.
 struct LoginView: View {
     @EnvironmentObject private var session: Session
     @State private var signup: LoginProvider?
@@ -90,10 +90,13 @@ struct LoginView: View {
                 }
 
                 #if DEBUG
-                Button("로그인 없이 시작 (개발용)") { session.devLogin() }
-                    .font(.footnote)
-                    .foregroundStyle(DB.sub)
-                    .padding(.top, 4)
+                // 서버 토큰 없이 들어가므로 실서버에서는 매물이 401 로 안 보인다 → 데모 데이터 · 같은 Wi-Fi 의 개발 서버에서만
+                if demoMode || SocialLogin.isLocal(AppConfig.shared.baseURL) {
+                    Button("로그인 없이 시작 (개발용)") { session.devLogin() }
+                        .font(.footnote)
+                        .foregroundStyle(DB.sub)
+                        .padding(.top, 4)
+                }
                 #endif
             }
             .padding(.horizontal, 24)
@@ -144,7 +147,7 @@ extension LoginView {
     }
 }
 
-/// 이메일 가입 · 로그인. 비밀번호는 명세 v1 대로 12~128자 (앞뒤 공백도 비밀번호의 일부)
+/// 이메일 가입 · 로그인. 가입 시 비밀번호는 8~128자다 (앞뒤 공백도 비밀번호의 일부).
 struct EmailAuthSheet: View {
     enum Mode: String, CaseIterable { case login = "로그인", signup = "회원가입" }
 
@@ -160,11 +163,10 @@ struct EmailAuthSheet: View {
     @State private var busy = false
     @State private var error: String?
 
-    static let passwordRange = 12...128
     static let nameRange = 1...40           // 서버 SignupRequest.displayName
 
     private var emailOK: Bool { let e = email.trimmed; return e.contains("@") && e.contains(".") }
-    private var passwordOK: Bool { Self.passwordRange.contains(password.count) }
+    private var passwordOK: Bool { SignupRequest.passwordLength.contains(password.count) }
     private var canSubmit: Bool {
         guard emailOK, !busy else { return false }
         switch mode {
@@ -185,12 +187,12 @@ struct EmailAuthSheet: View {
                     FieldBlock(title: "이메일") {
                         DBTextField(placeholder: "example@cau.ac.kr", text: $email, keyboard: .emailAddress)
                     }
-                    FieldBlock(title: "비밀번호", subtitle: mode == .signup ? "12자 이상" : nil) {
+                    FieldBlock(title: "비밀번호", subtitle: mode == .signup ? "\(SignupRequest.passwordLength.lowerBound)자 이상" : nil) {
                         DBSecureField(placeholder: "비밀번호", text: $password, isNew: mode == .signup)
                     }
                     if mode == .signup {
                         if !password.isEmpty && !passwordOK {
-                            Text("비밀번호는 12자 이상 128자 이하로 입력해 주세요").font(.caption).foregroundStyle(DB.danger)
+                            Text(SignupRequest.passwordLengthMessage).font(.caption).foregroundStyle(DB.danger)
                         }
                         FieldBlock(title: "비밀번호 확인") {
                             DBSecureField(placeholder: "한 번 더 입력", text: $passwordAgain, isNew: true)
@@ -245,7 +247,7 @@ struct EmailAuthSheet: View {
             mode = .login
         } catch {
             self.error = error.validationAwareMessage(hint: mode == .signup
-                ? "이메일 형식을 확인해 주세요. 비밀번호는 12~128자, 이름은 40자까지 쓸 수 있습니다."
+                ? "이메일 형식을 확인해 주세요. \(SignupRequest.passwordLengthMessage). 이름은 40자까지 쓸 수 있습니다."
                 : "이메일 형식과 비밀번호를 확인해 주세요.")
         }
     }

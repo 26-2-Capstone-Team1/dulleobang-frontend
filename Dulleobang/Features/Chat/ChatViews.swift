@@ -6,6 +6,8 @@ struct ChatListView: View {
 }
 
 private struct ChatListContent: View {
+    @EnvironmentObject private var session: Session
+    @Environment(\.navigate) private var navigate
     @State private var rooms: [ChatRoomSummary] = []
     @State private var search = ""
     @State private var loaded = false
@@ -55,11 +57,21 @@ private struct ChatListContent: View {
                 try? await Task.sleep(for: .seconds(10))
             }
         }
+        .onAppear { openPendingChat() }
+        .onChange(of: session.pendingChatId) { _, _ in openPendingChat() }
+    }
+
+    /// 새 메시지 배너를 눌렀을 때 그 채팅방을 연다
+    private func openPendingChat() {
+        guard let id = session.pendingChatId else { return }
+        session.pendingChatId = nil
+        navigate(.chat(id))
     }
 
     private func load() async {
         do {
             rooms = try await ChatAPI.rooms()
+            session.applyChatRooms(rooms)                   // 채팅 탭 배지도 같이 갱신
             loadError = nil
         } catch {
             if !error.isCancellation { loadError = error.userMessage }
@@ -182,6 +194,11 @@ struct ChatRoomView: View {
                 await refresh()
                 try? await Task.sleep(for: .seconds(3))
             }
+        }
+        .onAppear { session.openChatId = chatId }           // 보고 있는 방은 배지 · 배너에서 뺀다
+        .onDisappear {
+            if session.openChatId == chatId { session.openChatId = nil }
+            Task { await session.checkChats() }              // 읽은 만큼 배지를 바로 줄인다
         }
         .task(id: detail?.listing?.listingId) {
             guard let id = detail?.listing?.listingId, listing?.listingId != id else { return }

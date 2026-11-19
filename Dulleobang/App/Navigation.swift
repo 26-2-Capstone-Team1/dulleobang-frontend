@@ -122,6 +122,7 @@ struct MainTabView: View {
                 .tag(MainTab.browse)
             ChatListView()
                 .tabItem { Label("채팅", systemImage: "message.fill") }
+                .badge(session.unreadChats)                // 안 읽은 채팅 메시지 수 (0 이면 안 보임)
                 .tag(MainTab.chat)
             MyPageView()
                 .tabItem { Label("마이페이지", systemImage: "person.fill") }
@@ -137,5 +138,47 @@ struct MainTabView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: session.toast)
+        .overlay(alignment: .top) {
+            if session.toast == nil, let b = session.chatBanner {
+                ChatBannerView(banner: b) {
+                    tab = .chat
+                    session.openChatFromBanner(b.chatId)
+                }
+                .task(id: b.id) {
+                    try? await Task.sleep(for: .seconds(5))
+                    if session.chatBanner?.id == b.id { session.chatBanner = nil }
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: session.chatBanner)
+        .task { await session.watchChats() }                // 채팅 탭 배지 · 새 메시지 배너
+    }
+}
+
+/// 새 채팅 메시지 배너 (앱이 켜져 있을 때). 누르면 그 채팅방으로 간다
+struct ChatBannerView: View {
+    let banner: Session.ChatBanner
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Image(systemName: "message.fill").foregroundStyle(DB.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(banner.title).font(.subheadline.weight(.bold)).foregroundStyle(DB.ink).lineLimit(1)
+                    Text(banner.text).font(.caption).foregroundStyle(DB.sub).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+            .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+        }
+        .buttonStyle(.plain)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .accessibilityLabel("새 메시지, \(banner.title): \(banner.text)")
     }
 }

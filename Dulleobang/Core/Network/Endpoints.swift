@@ -108,6 +108,11 @@ enum AuthAPI {
 }
 
 enum UserAPI {
+    /// 회원 탈퇴. 백엔드가 만드는 중이라 경로 · 방식은 확정되면 여기만 맞춘다 (지금은 DELETE /users/me 로 가정)
+    static func deleteAccount() async throws {
+        let _: Empty = try await APIClient.shared.delete("users/me")
+    }
+
     /// 중개사 인증 상태. 신청한 적 없으면 nil (404)
     static func agentProfile() async throws -> AgentProfile? {
         do {

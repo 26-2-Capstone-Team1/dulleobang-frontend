@@ -1238,6 +1238,40 @@ window.addEventListener('resize', () => {
   labels.setSize(innerWidth, innerHeight);
 });
 
+// 라벨 겹침 줄이기: 화면에서 겹치는 라벨은 가까운 것을 그대로 두고, 먼 것을 겹치지 않는 자리까지 아래로 민다.
+// 매 프레임 CSS2DRenderer 가 자리를 잡은 뒤에 돈다(그 transform 뒤에 translateY 를 덧붙이고, 다음 프레임에 새로 계산).
+// 가구 상자가 붙어 있으면(책상 · 의자) 치수 라벨이 겹쳐 읽을 수 없던 문제 (실서버 시험 매물, 11.19)
+const _lv = new THREE.Vector3();
+function declutterLabels() {
+  if (!overlayOn) return;
+  const hw = innerWidth / 2, hh = innerHeight / 2, items = [];
+  overlay.traverseVisible((o) => {
+    if (!o.isCSS2DObject) return;
+    const el = o.element;
+    if (el.style.display === 'none' || !el.parentNode) return;
+    _lv.setFromMatrixPosition(o.matrixWorld).project(camera);
+    if (_lv.z < -1 || _lv.z > 1) return;
+    if (!el._lw) { el._lw = el.offsetWidth; el._lh = el.offsetHeight; }   // 글자는 바뀌지 않으므로 한 번만 잰다
+    if (!el._lw) return;
+    items.push({ el, x: _lv.x * hw + hw, y: -_lv.y * hh + hh, w: el._lw, h: el._lh, z: _lv.z });
+  });
+  if (items.length < 2) return;
+  items.sort((a, b) => a.z - b.z);                    // 가까운 라벨이 제자리
+  const placed = [];
+  for (const it of items) {
+    const left = it.x - it.w / 2, right = it.x + it.w / 2;
+    let top = it.y - it.h / 2;
+    for (let pass = 0; pass < 8; pass++) {
+      const hit = placed.find((p) => left < p.right && right > p.left && top < p.bottom && top + it.h > p.top);
+      if (!hit) break;
+      top = hit.bottom + 2;
+    }
+    const dy = top - (it.y - it.h / 2);
+    if (dy > 0.5) it.el.style.transform += ` translateY(${dy.toFixed(1)}px)`;
+    placed.push({ left, right, top, bottom: top + it.h });
+  }
+}
+
 renderer.setAnimationLoop(() => {
   updatePointSize();
   if (room) {
@@ -1246,6 +1280,7 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, camera);
   labels.render(scene, camera);
+  declutterLabels();
 });
 
 window.DV = {
