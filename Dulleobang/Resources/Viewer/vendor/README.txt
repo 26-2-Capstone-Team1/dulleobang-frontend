@@ -1,3 +1,8 @@
+basis/  (앱에 늘 들어 있음, 지우지 말 것)
+  basis_transcoder.js · basis_transcoder.wasm — KTX2(Basis) 텍스처를 푸는 트랜스코더. three@0.170.0 패키지의
+  examples/jsm/libs/basis/ 에서 그대로 복사한 것. three 버전을 올리면 같은 버전의 것으로 바꿔 넣는다.
+  없으면 뷰어가 three 를 받은 곳(CDN)의 것을 쓴다.
+
 오프라인 시연용 로컬 사본 (선택). 여기에 파일이 있으면 앱이 CDN 대신 이것을 쓴다.
 
 필요한 구조:

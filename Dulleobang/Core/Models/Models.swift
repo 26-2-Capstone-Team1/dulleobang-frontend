@@ -317,10 +317,23 @@ struct SpaceResponse: Codable {
     /// 방 메시: room.glb (또는 면이 있는 PLY · OBJ). AI 팀 메시 파이프라인(export_space.py)의 결과, ARKit 좌표 그대로.
     /// 있으면 3dgsUri · pointsUri 보다 먼저 쓴다. 가구는 objects[].modelUri 로 따로 온다
     var meshUri: String? = nil
+    /// 폰용 방 메시 (선택, AI 팀 11.20): 텍스처를 KTX2(Basis)로 압축한 판. 폰에서는 이것을 가장 먼저 연다
+    var meshMobileUri: String? = nil
+    /// 폰용 방 메시를 이 기기에서 못 열 때(뷰어가 죽음 · 읽기 실패) 여는 판 (선택, 약 48 MB). 이것도 안 되면 점구름으로
+    var meshFallbackUri: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case threeDgsUri = "3dgsUri", pointsUri, roomGeometry, roomDimensions, objects, collisionGeometryUri
-        case spaceVersion, objectsVersion, glass, meshUri
+        case spaceVersion, objectsVersion, glass, meshUri, meshMobileUri, meshFallbackUri
+    }
+
+    /// 이 앱(폰)에서 열어 볼 방 메시 순서: 폰용 KTX2 판 → 대체판(48 MB). 폰용 판이 없으면 meshUri 가 첫째.
+    /// 폰용 판이 있으면 meshUri(PC 용 고해상도일 수 있다)는 쓰지 않는다. 모두 못 열면 점구름(pointsUri · 3dgsUri)으로 간다
+    var phoneMeshCandidates: [String] {
+        func given(_ u: String?) -> String? { u.flatMap { $0.isEmpty ? nil : $0 } }
+        var out: [String] = []
+        for case let u? in [given(meshMobileUri) ?? given(meshUri), given(meshFallbackUri)] where !out.contains(u) { out.append(u) }
+        return out
     }
 }
 
@@ -339,7 +352,10 @@ extension SpaceResponse {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threeDgsUri = try c.decodeIfPresent(String.self, forKey: .threeDgsUri)
         pointsUri = try c.decodeIfPresent(String.self, forKey: .pointsUri)
-        meshUri = (try? LooseContainer(decoder))?.string("meshUri", "meshUrl", "roomMeshUri", "roomUri")
+        let loose = try? LooseContainer(decoder)
+        meshUri = loose?.string("meshUri", "meshUrl", "roomMeshUri", "roomUri")
+        meshMobileUri = loose?.string("meshMobileUri", "meshMobileUrl", "mobileMeshUri")
+        meshFallbackUri = loose?.string("meshFallbackUri", "meshFallbackUrl", "fallbackMeshUri")
         roomGeometry = try c.decodeIfPresent(RoomGeometry.self, forKey: .roomGeometry)
         roomDimensions = try c.decodeIfPresent(RoomDimensions.self, forKey: .roomDimensions)
         let all = try c.decodeIfPresent([SceneObject].self, forKey: .objects) ?? []

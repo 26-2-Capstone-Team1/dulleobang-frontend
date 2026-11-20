@@ -21,7 +21,7 @@
 | `Features/Viewer` | WKWebView 3D 뷰어(1인칭/평면뷰), 스킴 핸들러, 에셋 캐시, 가구 구분(중개사) · 가구 빼 보기(모두), 가구 배치·저장 | 7–12주차 |
 | `Features/Furniture` | 내 가구 목록, 가구 등록(→촬영) | 10주차 |
 | `Features/Compare` | 같은 가구 구성을 여러 매물(관심 매물 우선)에 자동 배치해 비교 | 13주차 |
-| `Resources/Viewer` | `index.html`, `viewer.js` (three.js + gaussian-splats-3d), `vendor/`(선택: 오프라인용 로컬 사본) | 7주차 |
+| `Resources/Viewer` | `index.html`, `viewer.js` (three.js + gaussian-splats-3d), `vendor/basis/`(KTX2 텍스처용 Basis 트랜스코더), `vendor/`(선택: 오프라인용 로컬 사본) | 7주차 |
 | `Resources/Mock` | 데모 데이터: `mock_seed.json`(매물 12 · 3D 공간 8 · 입주 상태 5 · 가구 4 · 채팅 3), 매물·욕실·가구 사진 | 데모 |
 | `DulleobangTests` | 충돌 판정·자동 배치·비교, 프레임 선별, 응답 디코딩(숫자 ID·봉투·Spring Page), 표기 테스트 | V-Model 단위 테스트 |
 
@@ -414,6 +414,8 @@ s = 256 / pose["width"]; fx, fy, cx, cy = (pose["K"][k] * s for k in ("fx", "fy"
 
 // SpaceResponse — 좌표는 모두 미터, ARKit 월드. yaw: +Y 축 반시계(위에서 볼 때), 도(°)
 { "meshUri": "https://…/room.glb",                 // 방 메시: AI 의 원본 room.glb (면이 있는 PLY · OBJ 도 됨). 있으면 이것을 그린다. 백엔드가 붙이기로 함(11.19), pointsUri 도 같이 유지
+  "meshMobileUri": "https://…/room_ktx2.glb",       // (선택, AI 팀 11.20) 폰용 방 메시: 텍스처를 KTX2(Basis)로 압축한 판. 있으면 앱은 이것을 가장 먼저 연다
+  "meshFallbackUri": "https://…/room_mobile.glb",   // (선택) 폰용 판에서 뷰어가 죽거나 못 읽으면 여는 판(약 48 MB). 이것도 안 되면 점구름
   "3dgsUri": "https://…/scene_current.ply",        // 3DGS (예전 방식. 이 자리에 .glb 나 메시 PLY 를 넣어 줘도 메시로 연다). 없으면 pointsUri 로 포인트클라우드 표시
   "pointsUri": "https://…/points.ply",              // 지금 실서버가 보내는 것: AI 방 GLB 를 GPU 워커가 바꾼 색 점구름 x y z r g b PLY(약 50만 점). 이때 3dgsUri 는 null
   "collisionGeometryUri": "https://…/collision.glb",
@@ -476,6 +478,12 @@ SDK 연결은 `App/Session.swift` 의 `SocialLogin` 한 곳입니다(2026-11-19 
 - **방 메시 (AI 팀 메시 파이프라인)**: `export_space.py` 가 만드는 ARKit 좌표의 `room.glb` 를 그대로 그립니다(glTF 도 미터 · Y-up 이라 변환 없음).
   스캔한 사진 색에 그 방의 빛이 이미 들어 있어서 조명을 다시 입히지 않고(unlit), 실내에서 보므로 면의 앞뒤를 모두 그립니다. 색 정보(텍스처 · 꼭짓점 색)가 없는 메시만 조명을 받습니다.
   압축된 GLB(`EXT_meshopt_compression`, `KHR_draco_mesh_compression`)도 열립니다(디코더는 three.js 와 같은 곳에서 받음).
+  KTX2(Basis Universal) 압축 텍스처(`KHR_texture_basisu`)도 열립니다: `KTX2Loader` + `detectSupport(renderer)` 가 이 기기 GPU 형식(아이폰 ETC2 · ASTC, PC BC)으로 바꿔 올립니다.
+  트랜스코더(`vendor/basis/basis_transcoder.js` · `.wasm`, three r170 패키지의 `examples/jsm/libs/basis`)는 앱에 들어 있고, 없으면 three.js 와 같은 곳에서 받습니다.
+- **폰 메모리 아끼기 (AI 팀 11.20)**: 화면 버퍼는 픽셀 비율 1.5 까지만 잡습니다(2 대비 약 44 % 적음). 텍스처가 기기 한도(`renderer.capabilities.maxTextureSize`)보다 크면
+  보통 그림(JPEG · PNG)은 three.js 가 줄여 올리고, 압축 텍스처는 한도 안에 들고 가로 · 세로가 4 의 배수인 밉맵 단계부터 올립니다(그런 단계가 없으면 `meshFailed` → 다음 판).
+  뷰어 코드에는 커스텀 셰이더가 없고(three.js 기본 재질 · 3DGS 라이브러리 셰이더만 씀), 스캔 메시는 텍스처 1장짜리 `MeshBasicMaterial` 로 그려서
+  WebGL 기본 한도(셰이더당 텍스처 16장)에 걸리지 않습니다. 셰이더를 새로 쓰면 16장 이하로.
 - **가구 GLB** (`objects[].modelUri`): 방 메시와 따로 온 가구를 그 가구 자리에 그립니다. ‘가구 빼 보기’ 미리보기와 입주 예상(`removedObjectIds`)은 이 모델을 숨기므로,
   방 메시가 같으면 **지금 모습 ↔ 입주 예상을 바꿀 때 파일을 다시 읽지 않습니다.**
   백엔드 규칙(11.19): 가구 GLB 는 원점 = 가구 바운딩 박스 중심인 로컬 좌표, `position` = 방 안의 중심, `rotation.yaw` = Y축 회전(도), 미터 → 뷰어 기본값 `center`.
@@ -486,8 +494,10 @@ SDK 연결은 `App/Session.swift` 의 `SocialLogin` 한 곳입니다(2026-11-19 
   서버가 가구를 빼고 새로 만든 입주 예상 파일(`room-states` 의 `pointsUri` · `sceneUri`)은 다시 가리지 않습니다(앱이 `sceneRemoved` 로 알려 줌).
   상자는 4 cm 넉넉히 잡고 바닥 · 천장 · 벽(RoomPlan 벽선)에 붙은 3 cm 띠는 남깁니다. 삼각형은 무게중심으로 판단하고, 바닥 띠 안에서는 위를 향한 면(바닥)만 남깁니다.
   인덱스를 통째로 복사하지 않고 상자 안 삼각형만 따로 들고 있다가 그리는 범위만 바꿉니다(삼각형 330만 개 시험 메시에서 처음 판단 0.2 초 · 가구 빼기 1 ms, PC 기준).
-- **메시가 안 열리면 점구름으로**: 뷰어가 방 메시를 못 읽으면(`meshFailed`) 또는 메모리가 모자라 웹 프로세스가 죽으면(`webViewWebContentProcessDidTerminate` → `crashed`) 앱이 뷰어를 다시 띄우고,
-  `pointsUri`(또는 3DGS)가 있으면 그 화면에서는 점구름으로 다시 엽니다(가구 GLB 도 받지 않음 · 안내 문구). 점구름으로도 두 번 죽으면 다시 열지 않고 알립니다.
+- **메시가 안 열리면 다음 판 → 점구름으로**: 폰은 방 메시를 `meshMobileUri`(KTX2) → `meshFallbackUri`(48 MB) 순서로 열어 봅니다. 폰용 판이 없으면 `meshUri` → `meshFallbackUri`,
+  폰용 판이 있으면 `meshUri`(PC 용 고해상도일 수 있음)는 폰에서 쓰지 않습니다(`SpaceResponse.phoneMeshCandidates`).
+  뷰어가 방 메시를 못 읽으면(`meshFailed`) 또는 메모리가 모자라 웹 프로세스가 죽으면(`webViewWebContentProcessDidTerminate` → `crashed`) 앱이 뷰어를 다시 띄우고 그 화면에서는 다음 판으로,
+  판이 더 없으면 `pointsUri`(또는 3DGS)가 있을 때 점구름으로 다시 엽니다(가구 GLB 도 받지 않음 · 안내 문구). 더 내려갈 곳이 없는데 두 번째로 죽으면 다시 열지 않고 알립니다.
 - **점구름 (지금 실서버가 보내는 것)**: 백엔드는 AI 의 방 GLB 를 색 점구름 PLY 로 바꿔 `pointsUri` 로 보냅니다(`3dgsUri` = null, 백엔드 문서 2026.11.18).
   점 크기는 점 간격에 맞춥니다(점 수와 범위로 평균 간격을 재서 그 2.6배를 실제 지름으로, 화각이 바뀌면 다시 계산) → 50만 점이면 지름 약 3.3 cm, 벽에 빈틈이 거의 안 보입니다.
   가구도 점 안에 들어 있으므로 ‘가구 빼 보기’ 미리보기와 입주 예상에서는 뺀 가구의 상자(4 cm 넉넉히) 안 점을 앱이 숨깁니다. 바닥 · 천장 · 벽에 붙은 3 cm 띠는 남기고,
@@ -524,6 +534,8 @@ Xcode › Product › Test (시뮬레이터 가능). 충돌 판정 13개 시나�
   8192 px 텍스처가 여러 장이라, 폰(WKWebView)에서 메모리가 버티는지는 ‘3D 파일 열어 보기’로 먼저 봐야 합니다. 안 열리면 AI 쪽에서 삼각형 수 · 텍스처 크기(4096 px)를 줄인 앱용 GLB 가 필요합니다.
   백엔드가 원본 room.glb 와 가구별 GLB 를 `meshUri` · `objects[].modelUri` 로 붙이기로 했습니다(11.19, `pointsUri` 도 유지). 가구 GLB = 바운딩 박스 중심 원점의 로컬 좌표,
   room.glb = 분리된 가구는 잘려 있고 분리되지 않은 가구만 붙어 있음. 다만 11.19 배포 확인 때 운영 DB 에 `meshUri` 를 줄 수 있는 공개 매물이 0건이라 실제 파일로는 아직 못 봤습니다.
+  (11.20) 고해상도판(128 MB)은 폰에서 뷰어가 죽었습니다. AI 팀이 폰용 KTX2 판(`meshMobileUri`)과 48 MB 대체판(`meshFallbackUri`)을 주기로 해서 앱은 그 순서로 엽니다.
+  KTX2 는 시험용으로 만든 파일(PR #2 room.glb 텍스처를 ETC1S 로 압축)로 PC 브라우저(SwiftShader)에서만 확인했고, 실제 폰 · 실제 KTX2 판으로는 아직 못 봤습니다.
 - 점구름은 시험용으로 만든 50만 점 PLY 로 PC 브라우저에서만 확인했습니다. 실서버 매물에서 점구름과 방 구조(`roomGeometry`) · 가구 상자가 같은 좌표로 겹치는지는 아직 모릅니다.
   입주 예상(`room-states`)은 PR #2 기반 작업이 끝나면 가구를 뺀 새 PLY 의 `pointsUri` 와 `remainingObjects` 를 같이 준다고 합니다(11.19 답변). 앱은 그것을 쓰고, 안 와도 뺀 가구 자리의 점을 숨깁니다.
 - 내 가구의 SAM 3D 가져오기(`POST /furniture/sam3d-imports`)는 앱에 화면이 없습니다. 백엔드 명세(11.19): Bearer 토큰 + `Idempotency-Key` 헤더, JSON `{studioJobId, name, category}`,

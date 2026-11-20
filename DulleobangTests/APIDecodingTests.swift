@@ -49,6 +49,34 @@ final class APIDecodingTests: XCTestCase {
         XCTAssertFalse(SceneAsset.isMesh("/files/scene.ksplat"))
     }
 
+    /// 폰에서 여는 방 메시 순서 (AI 팀 11.20): 폰용 KTX2 판 → 48 MB 대체판 → 점구름. 폰용 판이 있으면 고해상도 meshUri 는 안 쓴다
+    func testPhoneMeshOrderFallsBackToLighterFileThenPoints() throws {
+        let s = try decode(SpaceResponse.self, #"""
+        {"meshUri": "/files/s1/room_hires.glb", "meshMobileUri": "/files/s1/room_ktx2.glb",
+         "meshFallbackUri": "/files/s1/room_mobile.glb", "pointsUri": "/files/s1/points.ply", "objects": []}
+        """#)
+        let c = s.phoneMeshCandidates
+        XCTAssertEqual(c, ["/files/s1/room_ktx2.glb", "/files/s1/room_mobile.glb"])
+        var pick = SpaceViewerModel.pickMesh(c, failed: [], hasPoints: true)
+        XCTAssertEqual(pick.mesh, c[0])
+        XCTAssertEqual(pick.next, c[1])
+        pick = SpaceViewerModel.pickMesh(c, failed: [c[0]], hasPoints: true)      // KTX2 판에서 뷰어가 죽음 → 48 MB 판
+        XCTAssertEqual(pick.mesh, c[1])
+        XCTAssertNil(pick.next)
+        pick = SpaceViewerModel.pickMesh(c, failed: Set(c), hasPoints: true)      // 그것도 죽음 → 점구름
+        XCTAssertNil(pick.mesh)
+        pick = SpaceViewerModel.pickMesh(c, failed: Set(c), hasPoints: false)     // 점구름이 없으면 마지막 판을 다시 열어 본다
+        XCTAssertEqual(pick.mesh, c[1])
+
+        // 폰용 판이 없으면 meshUri 가 첫째. 같은 주소 · 빈 문자열은 빼고 센다
+        let old = try decode(SpaceResponse.self, #"{"meshUri": "/a.glb", "meshFallbackUri": "/a.glb", "objects": []}"#)
+        XCTAssertEqual(old.phoneMeshCandidates, ["/a.glb"])
+        let blank = try decode(SpaceResponse.self, #"{"meshUri": "/a.glb", "meshMobileUri": "", "meshFallbackUri": "/b.glb", "objects": []}"#)
+        XCTAssertEqual(blank.phoneMeshCandidates, ["/a.glb", "/b.glb"])
+        let none = try decode(SpaceResponse.self, #"{"pointsUri": "/p.ply", "objects": []}"#)
+        XCTAssertEqual(none.phoneMeshCandidates, [])
+    }
+
     /// 방 크기는 벽으로 잰다: 31° 돌아간 2.73 × 3.09 m 방(실서버 시험 매물)이 축에 맞춘 범위로는 3.9 × 4.1 m 가 된다
     func testRoomFootprintUsesWallsNotAxisBox() {
         func walls(_ pts: [(Double, Double)]) -> [Wall] {

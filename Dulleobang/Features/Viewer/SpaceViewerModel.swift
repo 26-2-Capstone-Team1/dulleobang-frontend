@@ -112,11 +112,12 @@ final class SpaceViewerModel: ObservableObject {
     /// 열려다 실패한 입주 상태 (만들기 실패 · 삭제됨 · 내 것이 아님). 화면이 "입주 예상 보기" 대상을 다시 찾는 신호
     @Published private(set) var unavailableRoomStateId: String?
     private var loadGeneration = 0
-    /// 방 메시를 이 기기에서 못 열었다 (읽기 실패 · 뷰어가 죽음) → 이 화면에서는 점구름(3DGS)으로 연다
-    private var avoidMesh = false
-    /// 지금 장면이 방 메시인가 · 메시 대신 열 점구름(3DGS)이 있는가
-    private var sceneIsMesh = false
-    private var hasMeshFallback = false
+    /// 이 기기에서 못 연 방 메시 (읽기 실패 · 뷰어가 죽음). 이 화면에서는 다음 판 → 점구름(3DGS) 순서로 연다
+    private var failedMeshes: Set<String> = []
+    /// 지금 연 방 메시 (메시가 아니면 nil) · 그것을 못 열면 다음에 열 방 메시 · 메시 대신 열 점구름(3DGS)이 있는가
+    private var openedMesh: String?
+    private var nextMesh: String?
+    private var hasPointsFallback = false
     /// 뷰어가 죽은 횟수 (점구름으로도 계속 죽으면 다시 열지 않고 알린다)
     private var crashCount = 0
     /// 불러오는 중에 또 불려도 옮겨 갈 가구 배치를 잃지 않게 잠시 보관
@@ -167,7 +168,8 @@ final class SpaceViewerModel: ObservableObject {
             spaceVersion = space.spaceVersion
             objectsVersion = space.objectsVersion
             var room = Room(space: space)
-            var mesh = space.meshUri, splat = space.threeDgsUri, points = space.pointsUri
+            // 방 메시는 폰용 KTX2 판 → 대체판(48 MB) 순서로 열어 본다 (AI 팀 11.20). 모두 못 열면 점구름
+            var meshes = space.phoneMeshCandidates, splat = space.threeDgsUri, points = space.pointsUri
             var removed: [String] = []
             var roomStateFiles: Set<String> = []     // 서버가 이 입주 상태를 위해 가구를 빼고 새로 만든 장면 · 점 파일
             if case .movein(let rsId) = stateKind {
@@ -177,7 +179,7 @@ final class SpaceViewerModel: ObservableObject {
                     room = room.applying(rs)
                     removed = rs.removedObjectIds
                     if let scene = rs.sceneUri {            // 서버가 가구를 뺀 장면을 따로 만들어 준 경우 (메시일 수도, 3DGS 일 수도)
-                        if SceneAsset.isMesh(scene) { mesh = scene } else { splat = scene; mesh = nil }
+                        if SceneAsset.isMesh(scene) { meshes = [scene] + meshes.filter { $0 != scene } } else { splat = scene; meshes = [] }
                         roomStateFiles.insert(scene)
                     }
                     if let p = rs.pointsUri {               // 백엔드: 입주 예상 = 고른 가구를 빼고 새로 만든 PLY (11.19)
@@ -189,8 +191,11 @@ final class SpaceViewerModel: ObservableObject {
                     unavailableRoomStateId = rsId
                 }
             }
-            hasMeshFallback = splat != nil || points != nil
-            if avoidMesh && hasMeshFallback { mesh = nil }      // 이 기기에서 메시가 안 열렸다 → 점구름(가구도 점 안에 있다)으로
+            hasPointsFallback = splat != nil || points != nil
+            let (mesh, next) = Self.pickMesh(meshes, failed: failedMeshes, hasPoints: hasPointsFallback)
+            let meshDropped = mesh == nil && !meshes.isEmpty      // 이 기기에서 메시가 모두 안 열렸다 → 점구름(가구도 점 안에 있다)으로
+            openedMesh = mesh
+            nextMesh = next
             self.room = room
             removedIds = removed
             objects = space.objects
@@ -200,7 +205,6 @@ final class SpaceViewerModel: ObservableObject {
 
             let prog: @Sendable (Double) -> Void = { [weak self] p in Task { @MainActor in self?.progress = p } }
             var meshURL: String?, splatURL: String?, pointsURL: String?
-            sceneIsMesh = mesh != nil
             // 실제로 여는 파일이 서버가 가구를 빼고 만든 것이면, 뺀 가구 자리를 뷰어가 다시 가리지 않게 알려 준다
             let sceneRemoved = (mesh ?? splat ?? points).map { roomStateFiles.contains($0) } == true ? removed : []
             if let m = mesh {
@@ -222,7 +226,7 @@ final class SpaceViewerModel: ObservableObject {
             // 방과 따로 온 가구 GLB. 하나를 못 받아도 방은 연다 (그 가구만 안 보인다).
             // 메시를 못 열어 점구름으로 여는 중이면 받지 않는다 (가구가 점 안에 들어 있고, 메모리를 아낀다)
             var objectModels: [String: String] = [:]
-            let modeled = avoidMesh ? [SceneObject]() : space.objects.filter { $0.modelUri != nil }
+            let modeled = meshDropped ? [SceneObject]() : space.objects.filter { $0.modelUri != nil }
             for (i, o) in modeled.enumerated() {
                 guard let uri = o.modelUri else { continue }
                 loading = "가구 모델 내려받는 중 (\(i + 1)/\(modeled.count))"
@@ -255,6 +259,13 @@ final class SpaceViewerModel: ObservableObject {
             self.error = error.userMessage
             loading = nil
         }
+    }
+
+    /// 열 방 메시 고르기: 이 기기에서 안 열린 판은 건너뛴다. 모두 안 열렸으면 nil(점구름으로),
+    /// 점구름도 없으면 마지막 판을 다시 열어 본다. next = 이것을 못 열면 다음에 열 판
+    nonisolated static func pickMesh(_ candidates: [String], failed: Set<String>, hasPoints: Bool) -> (mesh: String?, next: String?) {
+        let usable = candidates.filter { !failed.contains($0) }
+        return (usable.first ?? (hasPoints ? nil : candidates.last), usable.count > 1 ? usable[1] : nil)
     }
 
     private func restorePlacements() async {
@@ -294,20 +305,22 @@ final class SpaceViewerModel: ObservableObject {
         case .progress(let v): progress = v
         case .error(let m): error = m; loading = nil
         case .meshFailed(let m):
-            if !avoidMesh && hasMeshFallback {
-                avoidMesh = true
-                toast = "방 메시를 열지 못해 점구름으로 엽니다"
+            if let cur = openedMesh, nextMesh != nil || hasPointsFallback {
+                failedMeshes.insert(cur)
+                toast = nextMesh != nil ? "방 메시를 열지 못해 다른 파일로 다시 엽니다" : "방 메시를 열지 못해 점구름으로 엽니다"
                 Task { await load(keepPlaced: !placed.isEmpty) }
             } else {
                 error = "방 메시를 열지 못했습니다" + (m.isEmpty ? "" : ": \(m)")
                 loading = nil
             }
         case .crashed:
-            // 뷰어가 메모리 부족 등으로 죽었다가 다시 떴다 (화면은 비어 있음). 메시였으면 점구름으로, 아니면 같은 장면으로 한 번 더 연다
+            // 뷰어가 메모리 부족 등으로 죽었다가 다시 떴다 (화면은 비어 있음).
+            // 메시였으면 다음 판(폰용 KTX2 → 48 MB 대체판) → 점구름 순서로, 아니면 같은 장면으로 한 번 더 연다
             crashCount += 1
-            if sceneIsMesh && hasMeshFallback && !avoidMesh {
-                avoidMesh = true
-                toast = "방 메시가 이 기기에서 너무 커서 점구름으로 다시 엽니다"
+            if let cur = openedMesh, nextMesh != nil || hasPointsFallback {
+                failedMeshes.insert(cur)
+                toast = nextMesh != nil ? "방 메시가 이 기기에서 너무 커서 다른 파일로 다시 엽니다"
+                                        : "방 메시가 이 기기에서 너무 커서 점구름으로 다시 엽니다"
             } else if crashCount >= 2 {
                 error = "3D 뷰어가 계속 멈춥니다. 이 기기에서 열기에는 3D 파일이 너무 큰 것 같아요."
                 loading = nil

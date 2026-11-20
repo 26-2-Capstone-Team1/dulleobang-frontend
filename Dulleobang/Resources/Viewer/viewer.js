@@ -21,7 +21,8 @@ const fmtDims = (d) => `${d.width.toFixed(2)}×${d.depth.toFixed(2)}×${d.height
 // ---------------------------------------------------------------- renderer / scene
 const stage = document.getElementById('stage');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// 이 뷰어는 앱(아이폰 웹뷰)에서만 돈다. 화면 버퍼를 1.5배까지만 잡아 메모리를 아낀다 (2배 대비 약 44% 적음, AI 팀 요청 11.20)
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 stage.appendChild(renderer.domElement);
@@ -238,7 +239,8 @@ async function sceneSource(p) {
 }
 
 let sceneGltf = null;
-// 압축된 GLB(EXT_meshopt_compression · KHR_draco_mesh_compression)도 열 수 있게 디코더를 붙인 로더 (처음 쓸 때 한 번 만든다)
+// 압축된 GLB(EXT_meshopt_compression · KHR_draco_mesh_compression · KHR_texture_basisu = KTX2 텍스처)도 열 수 있게
+// 디코더를 붙인 로더 (처음 쓸 때 한 번 만든다)
 async function gltfLoaderWithDecoders() {
   if (sceneGltf) return sceneGltf;
   const loader = new GLTFLoader();
@@ -252,8 +254,50 @@ async function gltfLoaderWithDecoders() {
     draco.setDecoderPath(new URL('../libs/draco/gltf/', import.meta.resolve('three/addons/loaders/DRACOLoader.js')).href);
     loader.setDRACOLoader(draco);
   } catch (_) {}
+  // KTX2(Basis) 텍스처: GPU 압축 그대로 올려서 같은 해상도에서도 메모리가 크게 준다 (AI 팀 폰용 메시, 11.20).
+  // 이 기기 GPU 가 받는 압축 형식(아이폰은 ETC2 · ASTC, PC 는 BC)을 detectSupport 가 고르고, 트랜스코더는 앱 번들 vendor/basis/ 것을 쓴다
+  try {
+    const { KTX2Loader } = await import('three/addons/loaders/KTX2Loader.js');
+    // 트랜스코더 워커는 하나만 (기본 4개). 워커마다 wasm 메모리를 따로 잡고 놓지 않아서, 폰에서는 한 장씩 푸는 편이 안전하다
+    const ktx2 = new KTX2Loader().setWorkerLimit(1);
+    ktx2.setTranscoderPath(await basisTranscoderPath());
+    ktx2.detectSupport(renderer);
+    loader.setKTX2Loader(ktx2);
+  } catch (e) {
+    console.warn('KTX2 로더를 준비하지 못했습니다 (KTX2 텍스처 메시는 열리지 않음)', e?.message || e);
+  }
   sceneGltf = loader;
   return loader;
+}
+
+// Basis 트랜스코더(basis_transcoder.js · .wasm) 위치: 앱 번들의 vendor/basis/ (CDN 없이도 열리게). 없으면 three 를 받은 곳(CDN)의 것.
+// 트랜스코더는 KTX2Loader 와 같은 three 버전(r170)이어야 한다
+async function basisTranscoderPath() {
+  const local = new URL('./vendor/basis/', location.href).href;
+  try {
+    const r = await fetch(local + 'basis_transcoder.js', { method: 'HEAD' });
+    if (r.ok) return local;
+  } catch (_) {}
+  return new URL('../libs/basis/', import.meta.resolve('three/addons/loaders/KTX2Loader.js')).href;
+}
+
+// 텍스처를 이 기기의 한도(maxTextureSize)에 맞춘다. 보통 그림(JPEG · PNG)은 three.js 가 GPU 에 올릴 때 한도까지 줄이지만,
+// 압축 텍스처(KTX2)는 줄일 수 없어서 한도 안에 드는 밉맵부터 쓴다. 맞는 밉맵이 없으면 이 메시는 열 수 없다고 알린다
+// (→ 앱이 다음 메시 · 점구름으로 넘어간다). window.__dvMaxTextureSize 는 시험용으로 한도를 낮춰 볼 때만 쓴다
+function maxTextureSize() { return window.__dvMaxTextureSize || renderer.capabilities.maxTextureSize; }
+function fitTexture(t) {
+  const mips = t?.mipmaps;
+  if (!t || !(t.isCompressedTexture || t.isDataTexture) || !mips?.length) return;
+  const max = maxTextureSize();
+  if (mips[0].width <= max && mips[0].height <= max) return;
+  // 블록 압축 중 PC 의 BC 형식은 맨 위 단계의 가로 · 세로가 4의 배수여야 GPU 에 올라간다 → 어느 기기에서든 되게, 한도 안에 들고 4의 배수인 단계부터 쓴다.
+  // (텍스처를 2의 거듭제곱 크기로 만들면 어느 단계든 맞는다. 3500 처럼 아니면 줄일 단계가 없을 수 있다)
+  const i = mips.findIndex((m) => m.width <= max && m.height <= max && m.width % 4 === 0 && m.height % 4 === 0);
+  if (i < 0) throw new Error(`텍스처 ${mips[0].width}×${mips[0].height} 가 이 기기 한도 ${max} 보다 크고, 줄여 올릴 밉맵 단계가 없습니다`);
+  mips.splice(0, i);
+  t.image = { ...t.image, width: mips[0].width, height: mips[0].height };
+  t.needsUpdate = true;
+  console.warn(`압축 텍스처를 기기 한도 ${max} 에 맞춰 밉맵 ${i}단계 낮춰 올립니다`);
 }
 
 // 스캔으로 만든 메시(방 · 가구)는 사진 색에 그 방의 빛이 이미 들어 있어서 조명을 다시 입히지 않는다(unlit).
@@ -263,6 +307,7 @@ function prepareScan(root) {
     if (!c.isMesh) return;
     const g = c.geometry, hasColor = g.hasAttribute('color');
     const convert = (m) => {
+      for (const k of TEX_SLOTS) fitTexture(m[k]);
       if (m.map || hasColor) {
         const b = new THREE.MeshBasicMaterial({
           map: m.map ?? null, color: m.color ? m.color.clone() : new THREE.Color(0xffffff), vertexColors: hasColor,
@@ -1505,21 +1550,31 @@ window.DV = {
   debugInfo: () => {
     const root = scan?.root;
     const frames = Object.fromEntries([...objectModels].map(([id, m]) => [id, m.frame]));
-    if (!root) return { scan: null, frames };
+    const gpu = { maxTextureSize: maxTextureSize(), pixelRatio: renderer.getPixelRatio() };
+    if (!root) return { scan: null, frames, gpu };
     if (root.isPoints) {
       const m = root.userData.mask;
       return { scan: 'points', points: root.geometry.getAttribute('position').count, drawn: root.geometry.drawRange.count,
                footprint: root.userData.footprint, size: root.material.size, hidden: m?.hidden ?? 0,
-               owned: m ? m.owner.reduce((a, v) => a + (v >= 0 ? 1 : 0), 0) : 0, maskMs: root.userData.maskMs, frames };
+               owned: m ? m.owner.reduce((a, v) => a + (v >= 0 ? 1 : 0), 0) : 0, maskMs: root.userData.maskMs, frames, gpu };
     }
     let tris = 0, owned = 0, hidden = 0;
+    const textures = [];
     root.traverse((c) => {
       if (!c.isMesh) return;
       const g = c.geometry, mk = c.userData.mask;
       tris += Math.floor((g.index ? g.index.count : g.getAttribute('position').count) / 3);
       if (mk) { owned += mk.ownedOwner.length; hidden += mk.hidden; }
+      for (const m of [].concat(c.material)) {
+        const t = m?.map;
+        if (t && !textures.some((x) => x.uuid === t.uuid)) {
+          textures.push({ uuid: t.uuid, compressed: !!t.isCompressedTexture, width: t.image?.width, height: t.image?.height,
+                          mips: t.mipmaps?.length ?? 0 });
+        }
+      }
     });
-    return { scan: 'mesh', tris, owned, hidden, maskMs: root.userData.maskMs, frames };
+    return { scan: 'mesh', tris, owned, hidden, maskMs: root.userData.maskMs, frames, gpu,
+             textures: textures.map(({ uuid, ...rest }) => rest) };
   },
   addFurniture, setFurnitureState, setFurnitureTransform, removeFurniture, select, objectShots,
 };
